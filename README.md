@@ -164,6 +164,9 @@ Open [http://localhost:3000](http://localhost:3000) in your browser:
 * **Child Portal**: [http://localhost:3000/child](http://localhost:3000/child)
 * **Clinician Portal**: [http://localhost:3000/clinician](http://localhost:3000/clinician)
 * **API Documentation**: [http://localhost:8000/docs](http://localhost:8000/docs)
+
+
+
 https://neuro-adapt-five.vercel.app/auth?role=child
 ---
 
