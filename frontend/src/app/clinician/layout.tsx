@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, createContext, useContext } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import {
@@ -11,42 +11,11 @@ import {
   BarChart2,
   Settings,
   LogOut,
-  Bell,
-  Search,
-  Stethoscope,
   Plus,
 } from "lucide-react";
 import NotificationBell from "../components/NotificationBell";
+import { ClinicianContext, ClinicianProfile } from "./ClinicianContext";
 import "./clinician-dashboard.css";
-
-/* ═══════════════════════════════════════════════════════════════════════ */
-/*                     CLINICIAN CONTEXT                                 */
-/* ═══════════════════════════════════════════════════════════════════════ */
-
-interface ClinicianProfile {
-  id: number;
-  name: string;
-  email: string;
-  role: string;
-}
-
-interface ClinicianContextType {
-  user: ClinicianProfile | null;
-  apiUrl: string;
-  refreshTrigger: number;
-  triggerRefresh: () => void;
-}
-
-const ClinicianContext = createContext<ClinicianContextType>({
-  user: null,
-  apiUrl: "",
-  refreshTrigger: 0,
-  triggerRefresh: () => {},
-});
-
-export function useClinicianContext() {
-  return useContext(ClinicianContext);
-}
 
 /* ═══════════════════════════════════════════════════════════════════════ */
 /*                           SIDEBAR                                     */
@@ -113,7 +82,7 @@ function Sidebar({
           </div>
           <div className="cl-sidebar-user-info">
             <span className="cl-sidebar-user-name">{userName}</span>
-            <span className="cl-sidebar-user-role">Clinician</span>
+            <span className="cl-sidebar-user-role">Clinician Portal</span>
           </div>
         </div>
         <button onClick={onLogout} className="cl-sidebar-logout">
@@ -159,6 +128,15 @@ export default function ClinicianLayout({ children }: { children: React.ReactNod
         const parsed = JSON.parse(stored);
         if (parsed.role === "clinician") {
           setUser(parsed);
+          fetch(`${apiUrl}/api/auth/me?user_id=${parsed.id}`)
+            .then((res) => (res.ok ? res.json() : null))
+            .then((data) => {
+              if (data?.user) {
+                setUser(data.user);
+                localStorage.setItem("neuroadapt_user", JSON.stringify(data.user));
+              }
+            })
+            .catch(() => {});
         } else if (parsed.role === "child") {
           router.replace("/child");
         } else {
@@ -170,10 +148,11 @@ export default function ClinicianLayout({ children }: { children: React.ReactNod
     } catch {
       router.replace("/auth?role=clinician");
     }
-  }, [router]);
+  }, [router, apiUrl]);
 
   const handleLogout = () => {
     localStorage.removeItem("neuroadapt_user");
+    localStorage.removeItem("neuroadapt_token");
     router.push("/auth?role=clinician");
   };
 
@@ -198,7 +177,7 @@ export default function ClinicianLayout({ children }: { children: React.ReactNod
             <div className="cl-topbar-left">
               <div>
                 <h1 className="cl-topbar-title">{pageTitle}</h1>
-                <span className="cl-topbar-subtitle">Clinician Oversight & Neurocognitive Progress Monitoring</span>
+                <span className="cl-topbar-subtitle">Pediatric Developmental Support & Multi-Pathway Monitoring</span>
               </div>
             </div>
             <div className="cl-topbar-right">

@@ -13,7 +13,7 @@ import {
   Clock,
   CheckCircle2,
 } from "lucide-react";
-import { useClinicianContext } from "../layout";
+import { useClinicianContext } from "../ClinicianContext";
 
 interface AnalyticsResponse {
   cohort_size: number;

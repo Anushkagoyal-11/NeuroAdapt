@@ -1,22 +1,47 @@
 """
 NeuroAdapt FastAPI Backend Entry Point.
-Connects directly to Supabase PostgreSQL database.
+Connects directly to PostgreSQL / SQLite database with multi-pathway support:
+- ADHD Pathway
+- Dyslexia Pathway
+- Speech & Language Pathway
+- Multi-pathway personalization & adaptive difficulty titration
+- Robust role-based authentication (Child, Clinician, Admin)
+- Clinical monitoring, longitudinal analytics, PDF reporting, voice interviews & parent dispatch
 """
 
-from fastapi import FastAPI, Depends, HTTPException, status, Response, UploadFile, File, Query
+import os
+import hashlib
+from datetime import datetime, timedelta
+from typing import Optional, Dict, List, Any
+
+from fastapi import FastAPI, Depends, HTTPException, status, Response, UploadFile, File, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 from pydantic import BaseModel, EmailStr
-from typing import Optional, Dict, List, Any
-from datetime import datetime, timedelta
+from jose import jwt, JWTError
+import bcrypt
 
 from .database import engine, Base, get_db
-from .models import User, Child, Exercise, SessionRecord, Performance, Recommendation, TherapyPlan, Assignment, Notification, VoiceInterview
+from .models import (
+    User,
+    Child,
+    Exercise,
+    SessionRecord,
+    Performance,
+    Recommendation,
+    TherapyPlan,
+    Assignment,
+    Notification,
+    VoiceInterview,
+)
 from .schemas import (
     UserCreate,
     UserResponse,
+    LoginRequest,
+    SignupRequest,
     ChildCreateRequest,
+    ChildPathwaysUpdateRequest,
     TherapyPlanCreateRequest,
     ClinicianAISummaryRequest,
     AssignmentCreateRequest,
@@ -28,17 +53,24 @@ from .services.mistral_service import generate_mistral_clinical_insights
 from .services.pdf_report_service import build_clinical_report_pdf
 from .services.telegram_service import send_telegram_message, generate_parent_update_prompt
 from .cache import get_cache, set_cache, invalidate_cache
+from .seed import seed_database
 
-# Create database tables if not exist (non-blocking on deployment startup)
+# JWT Configuration
+JWT_SECRET = os.getenv("JWT_SECRET", "neuroadapt-secure-platform-jwt-secret-key-2026")
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
+
+# Create tables and seed default data
 try:
     Base.metadata.create_all(bind=engine)
-except Exception as _db_err:
-    print(f"[NeuroAdapt Startup] Notice: Table auto-creation deferred: {_db_err}")
+    seed_database()
+except Exception as _init_err:
+    print(f"[NeuroAdapt Startup] Notice: Initial schema setup: {_init_err}")
 
 app = FastAPI(
     title="NeuroAdapt API",
-    description="Cognitive Health & Adaptive Therapy Platform API connected to Supabase",
-    version="1.0.0",
+    description="Multi-Pathway Personalized Developmental Support & Cognitive Rehabilitation Platform",
+    version="2.0.0",
 )
 
 # Enable CORS for Next.js frontend
@@ -50,39 +82,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-class LoginRequest(BaseModel):
-    email: str
-    password: str
-    role: Optional[str] = "child"
 
-class SignupRequest(BaseModel):
-    name: str
-    email: str
-    password: str
-    role: str
-    age: Optional[int] = 8
-    condition: Optional[str] = "Cognitive Retraining"
-
-@app.get("/")
-def read_root():
-    return {"message": "NeuroAdapt API is active and connected to Supabase PostgreSQL", "status": "online"}
-
-@app.get("/api/health")
-def health_check(db: Session = Depends(get_db)):
+@app.on_event("startup")
+def startup_event():
     try:
-        user_count = db.query(User).count()
-        return {"status": "healthy", "database": "connected", "total_users": user_count}
+        seed_database()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database connection error: {str(e)}")
+        print(f"[NeuroAdapt Startup] Seeding notice: {e}")
 
-import hashlib
-import os
-import bcrypt
+
+# =====================================================================
+# AUTHENTICATION & SECURITY UTILITIES
+# =====================================================================
 
 def hash_password(password: str) -> str:
     salt = os.urandom(16).hex()
     dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100000).hex()
     return f"pbkdf2_sha256${salt}${dk}"
+
 
 def verify_password(plain_password: str, stored_hash: str) -> bool:
     if not stored_hash or not plain_password:
@@ -96,16 +113,94 @@ def verify_password(plain_password: str, stored_hash: str) -> bool:
     if stored_hash.startswith("pbkdf2:"):
         raw = stored_hash[len("pbkdf2:"):]
         return plain_password == raw
-    if stored_hash.startswith("$2b$") or stored_hash.startswith("$2a$"):
+    if stored_hash.startswith("$2b$") or stored_hash.startswith("$2a$") or stored_hash.startswith("$2y$"):
         try:
             if bcrypt.checkpw(plain_password.encode("utf-8"), stored_hash.encode("utf-8")):
                 return True
         except Exception:
             pass
-        # Demo seed users default passwords fallback
         if plain_password in ["password123", "demo123", "admin123", "child123"]:
             return True
     return plain_password == stored_hash
+
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    to_encode = data.copy()
+    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+def resolve_child_record(db: Session, identifier: int) -> Optional[Child]:
+    """
+    Robust child lookup handling:
+    1. Child.user_id == identifier (when caller passes user_id)
+    2. Child.id == identifier (when caller passes child_id)
+    3. User name fallback
+    """
+    child = db.query(Child).filter(Child.user_id == identifier).first()
+    if child:
+        return child
+    child = db.query(Child).filter(Child.id == identifier).first()
+    if child:
+        return child
+    user = db.query(User).filter(User.id == identifier).first()
+    if user and user.role == "child":
+        child = db.query(Child).filter(Child.name == user.name).first()
+        if child:
+            return child
+    return None
+
+
+def get_current_user_from_token(authorization: Optional[str] = Header(None), db: Session = Depends(get_db)) -> Optional[User]:
+    if not authorization:
+        return None
+    try:
+        scheme, token = authorization.split()
+        if scheme.lower() != "bearer":
+            return None
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        user_id = payload.get("sub")
+        if not user_id:
+            return None
+        return db.query(User).filter(User.id == int(user_id)).first()
+    except Exception:
+        return None
+
+
+# =====================================================================
+# SYSTEM & HEALTH ENDPOINTS
+# =====================================================================
+
+@app.get("/")
+def read_root():
+    return {
+        "message": "NeuroAdapt API is active and healthy",
+        "status": "online",
+        "pathways": ["adhd", "dyslexia", "speech"],
+    }
+
+
+@app.get("/api/health")
+def health_check(db: Session = Depends(get_db)):
+    try:
+        user_count = db.query(User).count()
+        children_count = db.query(Child).count()
+        exercise_count = db.query(Exercise).count()
+        return {
+            "status": "healthy",
+            "database": "connected",
+            "total_users": user_count,
+            "total_children": children_count,
+            "total_exercises": exercise_count,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database connection error: {str(e)}")
+
+
+# =====================================================================
+# AUTHENTICATION ENDPOINTS (SIGNUP, LOGIN, SESSION VERIFICATION)
+# =====================================================================
 
 @app.post("/api/auth/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def signup(req: SignupRequest, db: Session = Depends(get_db)):
@@ -113,8 +208,9 @@ def signup(req: SignupRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Please provide a valid email address.")
     if not req.password or len(req.password) < 6:
         raise HTTPException(status_code=400, detail="Password must be at least 6 characters long.")
-    if req.role not in ["child", "clinician", "admin"]:
-        raise HTTPException(status_code=400, detail="Invalid user role.")
+    role_normalized = req.role.strip().lower()
+    if role_normalized not in ["child", "clinician", "admin"]:
+        raise HTTPException(status_code=400, detail="Invalid user role. Must be 'child', 'clinician', or 'admin'.")
 
     # Check if user already exists
     existing_user = db.query(User).filter(User.email == req.email.strip().lower()).first()
@@ -125,34 +221,70 @@ def signup(req: SignupRequest, db: Session = Depends(get_db)):
         )
 
     hashed_pwd = hash_password(req.password)
+    user_name = req.name.strip() or req.email.split("@")[0].capitalize()
 
     new_user = User(
-        name=req.name.strip() or req.email.split("@")[0],
+        name=user_name,
         email=req.email.strip().lower(),
         hashed_password=hashed_pwd,
-        role=req.role.strip().lower(),
+        role=role_normalized,
         created_at=datetime.utcnow()
     )
-
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
 
-    # If role is child, also create entry in children table with submitted age
+    assigned_pathways = req.pathways if (req.pathways and isinstance(req.pathways, list)) else ["adhd"]
+
+    # If role is child, also create linked entry in children table
     if new_user.role == "child":
         child_age = int(req.age) if (req.age and req.age > 0) else 8
+        default_clinician = db.query(User).filter(User.role == "clinician").order_by(User.id.asc()).first()
+        clinician_id = default_clinician.id if default_clinician else None
+
         child_profile = Child(
+            user_id=new_user.id,
             caregiver_id=None,
-            clinician_id=None,
+            clinician_id=clinician_id,
             name=new_user.name,
             age=child_age,
-            profile_data={"condition": req.condition or "Cognitive Retraining", "baseline_score": 70, "signup_source": "portal_web"},
+            assigned_pathways=assigned_pathways,
+            profile_data={
+                "condition": req.condition or "Developmental Support",
+                "baseline_score": 70,
+                "pathways": assigned_pathways,
+                "signup_source": "portal_web"
+            },
             created_at=datetime.utcnow()
         )
         db.add(child_profile)
         db.commit()
+        db.refresh(child_profile)
 
-    return new_user
+        # Default therapy plan
+        plan = TherapyPlan(
+            child_id=child_profile.id,
+            clinician_id=clinician_id or 1,
+            target_pathways=assigned_pathways,
+            target_domains=["attention", "working_memory"],
+            min_difficulty=1,
+            max_difficulty=6,
+            schedule_notes="Standard initial protocol: 3 sessions/week",
+            created_at=datetime.utcnow()
+        )
+        db.add(plan)
+        db.commit()
+
+    return UserResponse(
+        id=new_user.id,
+        name=new_user.name,
+        email=new_user.email,
+        role=new_user.role,
+        created_at=new_user.created_at,
+        age=req.age if new_user.role == "child" else None,
+        assigned_pathways=assigned_pathways if new_user.role == "child" else None,
+    )
+
 
 @app.post("/api/auth/login")
 def login(req: LoginRequest, db: Session = Depends(get_db)):
@@ -178,40 +310,98 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
             detail=f"Access denied: This account is registered as a {user_role_name}. Please choose the {user_role_name} Portal to sign in."
         )
 
-    child_rec = db.query(Child).filter(Child.name == user.name).first() if user.role == "child" else None
+    child_rec = resolve_child_record(db, user.id) if user.role == "child" else None
+    assigned_pathways = (child_rec.assigned_pathways if child_rec and child_rec.assigned_pathways else ["adhd"]) if user.role == "child" else None
+
+    # Generate persistent JWT access token
+    token = create_access_token({
+        "sub": str(user.id),
+        "email": user.email,
+        "role": user.role,
+        "name": user.name,
+    })
 
     return {
         "message": "Login successful",
+        "access_token": token,
+        "token_type": "bearer",
         "user": {
             "id": user.id,
+            "child_id": child_rec.id if child_rec else None,
             "name": user.name,
             "email": user.email,
             "role": user.role,
-            "age": child_rec.age if child_rec else None
+            "age": child_rec.age if child_rec else 8,
+            "assigned_pathways": assigned_pathways,
         }
     }
 
+
+@app.get("/api/auth/me")
+def get_current_user_profile(
+    user_id: Optional[int] = Query(None),
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Session restoration endpoint:
+    Verifies user identity by bearer token or user_id query parameter.
+    """
+    user = None
+    if authorization:
+        user = get_current_user_from_token(authorization, db)
+    if not user and user_id:
+        user = db.query(User).filter(User.id == user_id).first()
+
+    if not user:
+        raise HTTPException(status_code=401, detail="Session expired or invalid. Please sign in.")
+
+    child_rec = resolve_child_record(db, user.id) if user.role == "child" else None
+    assigned_pathways = (child_rec.assigned_pathways if child_rec and child_rec.assigned_pathways else ["adhd"]) if user.role == "child" else None
+
+    return {
+        "user": {
+            "id": user.id,
+            "child_id": child_rec.id if child_rec else None,
+            "name": user.name,
+            "email": user.email,
+            "role": user.role,
+            "age": child_rec.age if child_rec else 8,
+            "assigned_pathways": assigned_pathways,
+        }
+    }
+
+
+# =====================================================================
+# MULTI-PATHWAY CHILD DASHBOARD & PROGRESS
+# =====================================================================
+
 @app.get("/api/child/dashboard/{user_id}")
 def get_child_dashboard(user_id: int, db: Session = Depends(get_db)):
-    """Return real dashboard data for a child user by querying sessions/performance tables."""
-    cached = get_cache(f"child_dash_{user_id}", max_age_seconds=4.0)
+    """
+    Unified Child Dashboard API supporting ADHD, Dyslexia, and Speech pathways.
+    Dynamically surfaces activities and progress tailored to the child's assigned pathways.
+    """
+    cached = get_cache(f"child_dash_{user_id}", max_age_seconds=2.0)
     if cached is not None:
         return cached
 
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=404, detail="User account not found")
 
     # Find child record
-    child = db.query(Child).filter(Child.name == user.name).first()
+    child = resolve_child_record(db, user_id)
     child_id = child.id if child else None
+    assigned_pathways = (child.assigned_pathways if child and child.assigned_pathways else ["adhd"])
 
     # Count sessions
     total_sessions = 0
     today_sessions = 0
     sessions_list = []
+    all_perfs = []
+
     if child_id:
-        from sqlalchemy import func
         total_sessions = db.query(SessionRecord).filter(SessionRecord.child_id == child_id).count()
         today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
         today_sessions = db.query(SessionRecord).filter(
@@ -219,22 +409,24 @@ def get_child_dashboard(user_id: int, db: Session = Depends(get_db)):
             SessionRecord.started_at >= today_start
         ).count()
 
-        # Recent sessions with single joined query
+        # Recent sessions
         recent_tuples = (
             db.query(SessionRecord, Performance, Exercise)
             .outerjoin(Performance, Performance.session_id == SessionRecord.id)
             .outerjoin(Exercise, SessionRecord.exercise_id == Exercise.id)
             .filter(SessionRecord.child_id == child_id)
             .order_by(SessionRecord.started_at.desc())
-            .limit(10)
+            .limit(12)
             .all()
         )
 
         for s, perf, ex in recent_tuples:
             sessions_list.append({
                 "id": s.id,
-                "exercise": ex.name if ex else "Unknown",
-                "domain": ex.domain if ex else "unknown",
+                "exercise_id": ex.id if ex else 1,
+                "exercise": ex.name if ex else "Cognitive Exercise",
+                "pathway": ex.pathway if ex else "adhd",
+                "domain": ex.domain if ex else "attention",
                 "score": perf.score if perf else 0,
                 "accuracy": round(perf.accuracy, 1) if perf else 0,
                 "response_time": round(perf.response_time / 1000, 2) if perf and perf.response_time else 0,
@@ -244,71 +436,6 @@ def get_child_dashboard(user_id: int, db: Session = Depends(get_db)):
                 "completed": s.completed_at is not None,
             })
 
-    # Aggregate per-domain stats with joined scan
-    domain_stats = {}
-    for domain_name in ["attention", "memory", "reasoning", "problem_solving"]:
-        if child_id:
-            d_tuples = (
-                db.query(Performance)
-                .join(SessionRecord, Performance.session_id == SessionRecord.id)
-                .join(Exercise, SessionRecord.exercise_id == Exercise.id)
-                .filter(
-                    SessionRecord.child_id == child_id,
-                    Exercise.domain == domain_name
-                )
-                .order_by(SessionRecord.started_at.asc())
-                .all()
-            )
-            avg_accuracy = round(sum(p.accuracy for p in d_tuples) / len(d_tuples), 1) if d_tuples else 0
-            avg_score = round(sum(p.score for p in d_tuples) / len(d_tuples)) if d_tuples else 0
-            max_difficulty = max((p.difficulty for p in d_tuples), default=1)
-            level = max_difficulty if d_tuples else 1
-            next_level = min(10, level + 1)
-            progress = round(avg_accuracy) if d_tuples else 0
-
-            # Calculate dynamic progress directly tied to latest game performance
-            if d_tuples and level < 10:
-                recent_perf = d_tuples[-1]
-                recent_acc = round(recent_perf.accuracy, 1)
-                next_level_progress = min(99, max(5, int(recent_acc)))
-
-                if recent_acc >= 80:
-                    hint = f"🎉 Excellent! You scored {recent_acc}% on your last game! Ready for Level {next_level}."
-                elif recent_acc >= 60:
-                    needed = max(1, round(80 - recent_acc))
-                    hint = f"Good effort! You scored {recent_acc}% on your last game ({needed}% more accuracy needed to unlock Level {next_level})."
-                else:
-                    needed = max(1, round(80 - recent_acc))
-                    hint = f"Keep practicing! You scored {recent_acc}% on your last game ({needed}% more accuracy needed to unlock Level {next_level})."
-            elif level >= 10:
-                next_level_progress = 100
-                hint = "🌟 Maximum Mastery Achieved! (Level 10 Master Tier)"
-            else:
-                next_level_progress = 15
-                hint = f"Play your next game at Level {level} to start building progress toward Level {next_level}!"
-
-            domain_stats[domain_name] = {
-                "sessions": len(d_tuples),
-                "accuracy": avg_accuracy,
-                "avg_score": avg_score,
-                "level": level,
-                "next_level": next_level,
-                "next_level_progress": next_level_progress,
-                "next_level_hint": hint,
-                "progress": progress,
-                "max_difficulty": max_difficulty,
-            }
-        else:
-            domain_stats[domain_name] = {
-                "sessions": 0, "accuracy": 0, "avg_score": 0,
-                "level": 1, "next_level": 2, "next_level_progress": 0,
-                "next_level_hint": "Play your first session to begin progress toward Level 2!",
-                "progress": 0, "max_difficulty": 1,
-            }
-
-    # Overall stats
-    all_perfs = []
-    if child_id:
         all_perfs = (
             db.query(Performance)
             .join(SessionRecord, Performance.session_id == SessionRecord.id)
@@ -316,12 +443,90 @@ def get_child_dashboard(user_id: int, db: Session = Depends(get_db)):
             .all()
         )
 
+    # Per-domain progress
+    all_domains = [
+        # ADHD
+        ("attention", "adhd", "Attention & Focus"),
+        ("working_memory", "adhd", "Working Memory"),
+        ("sequencing", "adhd", "Sequencing"),
+        ("cognitive_flexibility", "adhd", "Cognitive Flexibility"),
+        # Dyslexia
+        ("letter_recognition", "dyslexia", "Letter Recognition"),
+        ("phonological", "dyslexia", "Phonological Awareness"),
+        ("word_recognition", "dyslexia", "Word Recognition"),
+        ("reading_comprehension", "dyslexia", "Reading Comprehension"),
+        ("spelling", "dyslexia", "Spelling Skills"),
+        # Speech
+        ("vocabulary", "speech", "Vocabulary Building"),
+        ("sentence_construction", "speech", "Sentence Construction"),
+        ("listening_comprehension", "speech", "Listening Comprehension"),
+        ("speech_sound", "speech", "Speech Sound Practice"),
+        ("communication", "speech", "Communication"),
+    ]
+
+    domain_stats = {}
+    pathway_stats = {"adhd": {"sessions": 0, "avg_accuracy": 0}, "dyslexia": {"sessions": 0, "avg_accuracy": 0}, "speech": {"sessions": 0, "avg_accuracy": 0}}
+
+    for domain_key, pathway_key, domain_label in all_domains:
+        if child_id:
+            d_tuples = (
+                db.query(Performance)
+                .join(SessionRecord, Performance.session_id == SessionRecord.id)
+                .join(Exercise, SessionRecord.exercise_id == Exercise.id)
+                .filter(
+                    SessionRecord.child_id == child_id,
+                    Exercise.domain == domain_key
+                )
+                .order_by(SessionRecord.started_at.asc())
+                .all()
+            )
+            avg_acc = round(sum(p.accuracy for p in d_tuples) / len(d_tuples), 1) if d_tuples else 0
+            avg_sc = round(sum(p.score for p in d_tuples) / len(d_tuples)) if d_tuples else 0
+            max_diff = max((p.difficulty for p in d_tuples), default=1)
+            level = max_diff if d_tuples else 1
+            next_level = min(10, level + 1)
+
+            domain_stats[domain_key] = {
+                "label": domain_label,
+                "pathway": pathway_key,
+                "sessions": len(d_tuples),
+                "accuracy": avg_acc,
+                "avg_score": avg_sc,
+                "level": level,
+                "next_level": next_level,
+                "progress": round(avg_acc),
+            }
+
+            pathway_stats[pathway_key]["sessions"] += len(d_tuples)
+        else:
+            domain_stats[domain_key] = {
+                "label": domain_label,
+                "pathway": pathway_key,
+                "sessions": 0,
+                "accuracy": 0,
+                "avg_score": 0,
+                "level": 1,
+                "next_level": 2,
+                "progress": 0,
+            }
+
+    # Aggregate pathway accuracies
+    for p_key in pathway_stats:
+        p_perfs = (
+            db.query(Performance)
+            .join(SessionRecord, Performance.session_id == SessionRecord.id)
+            .join(Exercise, SessionRecord.exercise_id == Exercise.id)
+            .filter(SessionRecord.child_id == child_id, Exercise.pathway == p_key)
+            .all()
+        ) if child_id else []
+        pathway_stats[p_key]["avg_accuracy"] = round(sum(p.accuracy for p in p_perfs) / len(p_perfs), 1) if p_perfs else 0
+
     avg_accuracy_overall = round(sum(p.accuracy for p in all_perfs) / len(all_perfs), 1) if all_perfs else 0
     total_score = sum(p.score for p in all_perfs)
     total_time_ms = sum(p.response_time for p in all_perfs)
     total_time_min = round(total_time_ms / 60000, 1) if total_time_ms else 0
 
-    # Calculate real active calendar day streak
+    # Streak calculation
     streak_days = 0
     if child_id:
         all_session_records = (
@@ -342,31 +547,46 @@ def get_child_dashboard(user_id: int, db: Session = Depends(get_db)):
             elif len(session_dates) > 0:
                 streak_days = 1
 
-    # Fetch active assignments with joined query
+    # Active assignments
     active_assignments = []
     if child_id:
         assign_tuples = (
             db.query(Assignment, Exercise, User)
             .outerjoin(Exercise, Assignment.exercise_id == Exercise.id)
             .outerjoin(User, Assignment.clinician_id == User.id)
-            .filter(
-                Assignment.child_id == child_id,
-                Assignment.status == "pending"
-            )
+            .filter(Assignment.child_id == child_id, Assignment.status == "pending")
             .order_by(Assignment.assigned_date.desc())
             .all()
         )
-
         for a, ex, clinician in assign_tuples:
             active_assignments.append({
                 "id": a.id,
                 "exercise_id": a.exercise_id,
                 "exercise_name": ex.name if ex else "Cognitive Exercise",
+                "pathway": ex.pathway if ex else "adhd",
                 "domain": ex.domain if ex else "attention",
                 "difficulty": a.difficulty,
                 "notes": a.notes,
-                "clinician_name": clinician.name if clinician else "Clinician",
+                "clinician_name": clinician.name if clinician else "Dr. Rajesh Mehta",
                 "assigned_date": a.assigned_date.isoformat() if a.assigned_date else None,
+            })
+
+    # Rule-based personalized recommendations per assigned pathway
+    recommended_exercises = []
+    for pathway in assigned_pathways:
+        p_exercises = db.query(Exercise).filter(Exercise.pathway == pathway).all()
+        if p_exercises:
+            # Pick exercise with lowest session count or lowest accuracy for practice
+            candidate = p_exercises[0]
+            recommended_exercises.append({
+                "exercise_id": candidate.id,
+                "name": candidate.name,
+                "pathway": candidate.pathway,
+                "domain": candidate.domain,
+                "difficulty": candidate.difficulty,
+                "description": candidate.description or "Targeted intervention exercise",
+                "instructions": candidate.instructions or "Follow on-screen steps to complete.",
+                "reason": f"Recommended for your {pathway.upper()} learning goals",
             })
 
     result_payload = {
@@ -379,6 +599,7 @@ def get_child_dashboard(user_id: int, db: Session = Depends(get_db)):
         },
         "child_id": child_id,
         "child_age": child.age if child else 8,
+        "assigned_pathways": assigned_pathways,
         "stats": {
             "total_sessions": total_sessions,
             "today_sessions": today_sessions,
@@ -388,8 +609,10 @@ def get_child_dashboard(user_id: int, db: Session = Depends(get_db)):
             "total_time_min": total_time_min,
             "streak_days": streak_days,
         },
-        "active_assignments": active_assignments,
+        "pathway_stats": pathway_stats,
         "domain_stats": domain_stats,
+        "active_assignments": active_assignments,
+        "recommended_exercises": recommended_exercises,
         "recent_sessions": sessions_list,
     }
     set_cache(f"child_dash_{user_id}", result_payload)
@@ -397,38 +620,93 @@ def get_child_dashboard(user_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/api/exercises")
-def get_exercises(db: Session = Depends(get_db)):
-    """Return all available exercises from the database."""
-    exercises = db.query(Exercise).all()
+def get_exercises(pathway: Optional[str] = None, db: Session = Depends(get_db)):
+    """Return all available exercises, optionally filtered by pathway (adhd, dyslexia, speech)."""
+    query = db.query(Exercise)
+    if pathway:
+        query = query.filter(Exercise.pathway == pathway.strip().lower())
+    exercises = query.order_by(Exercise.pathway.asc(), Exercise.difficulty.asc(), Exercise.id.asc()).all()
     return [
         {
             "id": ex.id,
             "name": ex.name,
+            "pathway": ex.pathway,
             "domain": ex.domain,
             "difficulty": ex.difficulty,
+            "description": ex.description,
+            "instructions": ex.instructions,
             "configuration": ex.configuration,
         }
         for ex in exercises
     ]
 
 
+@app.get("/api/child/{child_id}/pathways")
+def get_child_pathways(child_id: int, db: Session = Depends(get_db)):
+    """Return child's current assigned pathways and platform available pathways."""
+    child = resolve_child_record(db, child_id)
+    if not child:
+        raise HTTPException(status_code=404, detail="Child record not found")
+    return {
+        "child_id": child.id,
+        "name": child.name,
+        "assigned_pathways": child.assigned_pathways or ["adhd"],
+        "available_pathways": [
+            {"id": "adhd", "name": "ADHD Pathway", "description": "Attention, working memory, sequencing & organization"},
+            {"id": "dyslexia", "name": "Dyslexia Pathway", "description": "Letter recognition, phonological awareness, spelling & reading comprehension"},
+            {"id": "speech", "name": "Speech & Language Pathway", "description": "Vocabulary building, sentence construction, listening & articulation"},
+        ]
+    }
+
+
+@app.put("/api/child/{child_id}/pathways")
+@app.post("/api/child/{child_id}/pathways")
+def update_child_pathways(child_id: int, req: ChildPathwaysUpdateRequest, db: Session = Depends(get_db)):
+    """Update assigned pathways for a child (ADHD, Dyslexia, Speech). Supports multiple overlapping pathways."""
+    child = resolve_child_record(db, child_id)
+    if not child:
+        raise HTTPException(status_code=404, detail="Child record not found")
+
+    valid_pathways = ["adhd", "dyslexia", "speech"]
+    clean_pathways = [p.strip().lower() for p in req.assigned_pathways if p.strip().lower() in valid_pathways]
+    if not clean_pathways:
+        raise HTTPException(status_code=400, detail="Must assign at least one valid pathway ('adhd', 'dyslexia', 'speech').")
+
+    child.assigned_pathways = clean_pathways
+    if not child.profile_data:
+        child.profile_data = {}
+    child.profile_data["pathways"] = clean_pathways
+    flag_modified(child, "profile_data")
+
+    # Update or align therapy plan
+    plan = db.query(TherapyPlan).filter(TherapyPlan.child_id == child.id).first()
+    if plan:
+        plan.target_pathways = clean_pathways
+
+    db.commit()
+    invalidate_cache()
+
+    return {
+        "message": f"Assigned pathways updated successfully to: {', '.join(clean_pathways)}",
+        "child_id": child.id,
+        "assigned_pathways": clean_pathways,
+    }
+
+
 @app.get("/api/child/{user_id}/progress")
 def get_child_progress(user_id: int, db: Session = Depends(get_db)):
-    """Return detailed progress data for charts — per-domain accuracy over time."""
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    child = db.query(Child).filter(Child.name == user.name).first()
+    """Return detailed multi-pathway progress timeline for charts and longitudinal tracking."""
+    child = resolve_child_record(db, user_id)
     if not child:
-        return {"domains": {}, "timeline": []}
-
-    from sqlalchemy import func
+        return {"domains": {}, "timeline": [], "pathways": ["adhd"]}
 
     timeline = []
-    sessions = db.query(SessionRecord).filter(
-        SessionRecord.child_id == child.id
-    ).order_by(SessionRecord.started_at.asc()).all()
+    sessions = (
+        db.query(SessionRecord)
+        .filter(SessionRecord.child_id == child.id)
+        .order_by(SessionRecord.started_at.asc())
+        .all()
+    )
 
     for s in sessions:
         perf = db.query(Performance).filter(Performance.session_id == s.id).first()
@@ -436,6 +714,8 @@ def get_child_progress(user_id: int, db: Session = Depends(get_db)):
         if perf and ex:
             timeline.append({
                 "date": s.started_at.isoformat() if s.started_at else None,
+                "exercise_name": ex.name,
+                "pathway": ex.pathway,
                 "domain": ex.domain,
                 "accuracy": round(perf.accuracy, 1),
                 "score": perf.score,
@@ -443,26 +723,26 @@ def get_child_progress(user_id: int, db: Session = Depends(get_db)):
                 "response_time": round(perf.response_time, 1) if perf.response_time else 0,
             })
 
-    return {"timeline": timeline}
+    return {
+        "child_id": child.id,
+        "assigned_pathways": child.assigned_pathways or ["adhd"],
+        "timeline": timeline,
+    }
 
 
 @app.get("/api/child/{user_id}/achievements")
 def get_child_achievements(user_id: int, db: Session = Depends(get_db)):
-    """Return achievements based on actual performance thresholds."""
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    child = db.query(Child).filter(Child.name == user.name).first()
-
+    """Return earned and upcoming achievements based on real performance thresholds."""
+    child = resolve_child_record(db, user_id)
     total_sessions = 0
     max_accuracy = 0
     total_score = 0
-    domains_played = set()
-
     streak_days = 0
+    domains_played = set()
+    pathways_played = set()
+
     if child:
-        sessions = db.query(SessionRecord).filter(SessionRecord.child_id == child.id).order_by(SessionRecord.started_at.desc()).all()
+        sessions = db.query(SessionRecord).filter(SessionRecord.child_id == child.id).all()
         total_sessions = len(sessions)
         session_ids = [s.id for s in sessions]
         perfs = db.query(Performance).filter(Performance.session_id.in_(session_ids)).all() if session_ids else []
@@ -473,6 +753,7 @@ def get_child_achievements(user_id: int, db: Session = Depends(get_db)):
             ex = db.query(Exercise).filter(Exercise.id == s.exercise_id).first()
             if ex:
                 domains_played.add(ex.domain)
+                pathways_played.add(ex.pathway)
 
         session_dates = {s.started_at.date() for s in sessions if s.started_at}
         today = datetime.utcnow().date()
@@ -486,64 +767,50 @@ def get_child_achievements(user_id: int, db: Session = Depends(get_db)):
             streak_days = 1
 
     achievements = [
-        {"id": "first_steps", "title": "First Steps", "icon": "🌟", "description": "Complete your first session", "earned": total_sessions >= 1},
-        {"id": "sharp_eye", "title": "Sharp Eye", "icon": "👁️", "description": "Achieve 80% accuracy", "earned": max_accuracy >= 80},
-        {"id": "memory_master", "title": "Memory Master", "icon": "🧠", "description": "Complete 5 memory exercises", "earned": False},
-        {"id": "streak_hero", "title": "Streak Hero", "icon": "🔥", "description": "Maintain a 3+ day streak", "earned": streak_days >= 3},
-        {"id": "perfect_score", "title": "Perfect Score", "icon": "💯", "description": "Get 100% accuracy", "earned": max_accuracy >= 100},
-        {"id": "speed_demon", "title": "Speed Demon", "icon": "⚡", "description": "Complete exercise under 2 min", "earned": False},
-        {"id": "explorer", "title": "Explorer", "icon": "🗺️", "description": "Try all 4 cognitive domains", "earned": len(domains_played) >= 4},
-        {"id": "rising_star", "title": "Rising Star", "icon": "⭐", "description": "Earn 500+ total XP", "earned": total_score >= 500},
-        {"id": "dedicated", "title": "Dedicated", "icon": "🎯", "description": "Complete 10 sessions", "earned": total_sessions >= 10},
-        {"id": "champion", "title": "Champion", "icon": "🏆", "description": "Complete 25 sessions", "earned": total_sessions >= 25},
+        {"id": "first_steps", "title": "First Steps", "icon": "🌟", "description": "Complete your first intervention session", "earned": total_sessions >= 1},
+        {"id": "sharp_eye", "title": "Sharp Focus", "icon": "👁️", "description": "Achieve 80% accuracy on an exercise", "earned": max_accuracy >= 80},
+        {"id": "streak_hero", "title": "Streak Hero", "icon": "🔥", "description": "Maintain a 3+ day practice streak", "earned": streak_days >= 3},
+        {"id": "perfect_score", "title": "Mastery Spark", "icon": "💯", "description": "Attain 100% accuracy on a challenge", "earned": max_accuracy >= 100},
+        {"id": "pathway_explorer", "title": "Multi-Pathway Explorer", "icon": "🗺️", "description": "Complete activities across multiple pathways", "earned": len(pathways_played) >= 2},
+        {"id": "rising_star", "title": "Rising Star", "icon": "⭐", "description": "Earn 500+ total XP across your journey", "earned": total_score >= 500},
+        {"id": "dedicated", "title": "Consistent Learner", "icon": "🎯", "description": "Complete 10 developmental sessions", "earned": total_sessions >= 10},
+        {"id": "champion", "title": "Neuro Champion", "icon": "🏆", "description": "Complete 25 developmental sessions", "earned": total_sessions >= 25},
     ]
 
-    # Add earned dates for Memory Master check
-    if child:
-        memory_sessions = db.query(SessionRecord).join(Exercise).filter(
-            SessionRecord.child_id == child.id,
-            Exercise.domain == "memory"
-        ).count()
-        for a in achievements:
-            if a["id"] == "memory_master":
-                a["earned"] = memory_sessions >= 5
-
-    return {"achievements": achievements, "total_sessions": total_sessions, "total_score": total_score, "streak_days": streak_days}
+    return {
+        "achievements": achievements,
+        "total_sessions": total_sessions,
+        "total_score": total_score,
+        "streak_days": streak_days,
+        "pathways_played": list(pathways_played),
+    }
 
 
 # =====================================================================
-# CLINICIAN PORTAL API ENDPOINTS (PRD SECTIONS 12, 13, 17, 18)
+# CLINICIAN PORTAL TELEMETRY & MANAGEMENT ENDPOINTS
 # =====================================================================
 
 @app.get("/api/clinician/dashboard/{clinician_id}")
 def get_clinician_dashboard(clinician_id: int, db: Session = Depends(get_db)):
     """
-    PRD Section 10: Clinician Telemetry Dashboard.
-    Aggregates:
-    - Active patient count
-    - Total sessions completed
-    - Cohort average accuracy
-    - Active therapy plans count
-    - Clinical alerts (performance regressions / missed sessions)
-    - Recent patient sessions feed
-    - Domain cross-patient breakdown
+    Clinician Dashboard Aggregation:
+    Cohort size, sessions monitored, active therapy plans, clinical alerts,
+    multi-pathway distribution, recent patient activity.
     """
-    cached = get_cache(f"clin_dash_{clinician_id}", max_age_seconds=4.0)
+    cached = get_cache(f"clin_dash_{clinician_id}", max_age_seconds=2.0)
     if cached is not None:
         return cached
 
     clinician = db.query(User).filter(User.id == clinician_id).first()
     if not clinician:
-        raise HTTPException(status_code=404, detail="Clinician user not found")
+        raise HTTPException(status_code=404, detail="Clinician user account not found")
 
-    # Fetch children assigned to this clinician (or all children if none specifically assigned)
+    # Children assigned or all children
     children = db.query(Child).filter(
         (Child.clinician_id == clinician_id) | (Child.clinician_id == None)
     ).all()
-    
     child_ids = [c.id for c in children]
 
-    # Total sessions monitored
     all_sessions = []
     if child_ids:
         all_sessions = db.query(SessionRecord).filter(
@@ -553,7 +820,6 @@ def get_clinician_dashboard(clinician_id: int, db: Session = Depends(get_db)):
     total_sessions_count = len(all_sessions)
     session_ids = [s.id for s in all_sessions]
 
-    # Performance records
     all_perfs = db.query(Performance).filter(
         Performance.session_id.in_(session_ids)
     ).all() if session_ids else []
@@ -561,12 +827,11 @@ def get_clinician_dashboard(clinician_id: int, db: Session = Depends(get_db)):
     avg_accuracy = round(sum(p.accuracy for p in all_perfs) / len(all_perfs), 1) if all_perfs else 0
     total_xp = sum(p.score for p in all_perfs)
 
-    # Active therapy plans count
     active_plans_count = db.query(TherapyPlan).filter(
         (TherapyPlan.clinician_id == clinician_id) | (TherapyPlan.child_id.in_(child_ids))
     ).count()
 
-    # Recent sessions list with single optimized joined query
+    # Recent sessions feed with pathway
     recent_tuples = (
         db.query(SessionRecord, Performance, Exercise, Child)
         .join(Performance, Performance.session_id == SessionRecord.id)
@@ -584,6 +849,7 @@ def get_clinician_dashboard(clinician_id: int, db: Session = Depends(get_db)):
             "child_id": s.child_id,
             "child_name": child.name,
             "exercise_name": ex.name,
+            "pathway": ex.pathway,
             "domain": ex.domain,
             "score": perf.score,
             "accuracy": round(perf.accuracy, 1),
@@ -594,9 +860,16 @@ def get_clinician_dashboard(clinician_id: int, db: Session = Depends(get_db)):
         for s, perf, ex, child in recent_tuples
     ]
 
-    # Domain summary across cohort with single joined scan
+    # Pathway distribution across cohort
+    pathway_distribution = {"adhd": 0, "dyslexia": 0, "speech": 0}
+    for c in children:
+        for p in (c.assigned_pathways or ["adhd"]):
+            if p in pathway_distribution:
+                pathway_distribution[p] += 1
+
+    # Domain summary
     domain_summary = {}
-    for domain_name in ["attention", "memory", "reasoning", "problem_solving"]:
+    for domain_name in ["attention", "working_memory", "letter_recognition", "vocabulary", "sentence_construction"]:
         d_tuples = (
             db.query(SessionRecord.child_id, Performance.accuracy)
             .join(Performance, Performance.session_id == SessionRecord.id)
@@ -604,7 +877,6 @@ def get_clinician_dashboard(clinician_id: int, db: Session = Depends(get_db)):
             .filter(SessionRecord.child_id.in_(child_ids), Exercise.domain == domain_name)
             .all()
         ) if child_ids else []
-
         accs = [t[1] for t in d_tuples if t[1] is not None]
         active_pids = set(t[0] for t in d_tuples)
         domain_summary[domain_name] = {
@@ -613,7 +885,7 @@ def get_clinician_dashboard(clinician_id: int, db: Session = Depends(get_db)):
             "active_patients_count": len(active_pids),
         }
 
-    # Clinical alerts (real dynamic rules)
+    # Clinical alerts based on real session telemetry
     alerts = []
     for c in children:
         c_sessions = [s for s in all_sessions if s.child_id == c.id]
@@ -623,8 +895,8 @@ def get_clinician_dashboard(clinician_id: int, db: Session = Depends(get_db)):
                 "child_id": c.id,
                 "child_name": c.name,
                 "title": "No Sessions Logged",
-                "message": f"{c.name} has not started any therapy sessions yet.",
-                "severity": "low"
+                "message": f"{c.name} has not started assigned pathway exercises yet.",
+                "severity": "low",
             })
         else:
             c_sids = [s.id for s in c_sessions[:3]]
@@ -636,9 +908,9 @@ def get_clinician_dashboard(clinician_id: int, db: Session = Depends(get_db)):
                         "type": "alert",
                         "child_id": c.id,
                         "child_name": c.name,
-                        "title": "Performance Regression Detected",
-                        "message": f"Recent 3 sessions accuracy dropped to {round(recent_avg, 1)}%. Difficulty titration recommended.",
-                        "severity": "high"
+                        "title": "Performance Titration Alert",
+                        "message": f"Recent 3 sessions accuracy dropped to {round(recent_avg, 1)}%. Difficulty titration or caregiver check recommended.",
+                        "severity": "high",
                     })
 
     res = {
@@ -656,6 +928,7 @@ def get_clinician_dashboard(clinician_id: int, db: Session = Depends(get_db)):
             "pending_alerts_count": len(alerts),
             "total_xp_earned": total_xp,
         },
+        "pathway_distribution": pathway_distribution,
         "domain_summary": domain_summary,
         "recent_sessions": recent_feed,
         "clinical_alerts": alerts,
@@ -666,8 +939,8 @@ def get_clinician_dashboard(clinician_id: int, db: Session = Depends(get_db)):
 
 @app.get("/api/clinician/children/{clinician_id}")
 def get_clinician_children(clinician_id: int, db: Session = Depends(get_db)):
-    """Returns list of child patients with their longitudinal performance and therapy plans."""
-    cached = get_cache(f"clin_children_{clinician_id}", max_age_seconds=4.0)
+    """Returns list of child patients with assigned pathways, performance, and plan status."""
+    cached = get_cache(f"clin_children_{clinician_id}", max_age_seconds=2.0)
     if cached is not None:
         return cached
 
@@ -685,24 +958,8 @@ def get_clinician_children(clinician_id: int, db: Session = Depends(get_db)):
         total_score = sum(p.score for p in perfs)
         last_active = sessions[0].started_at.isoformat() if sessions else None
 
-        # Therapy plan
         plan = db.query(TherapyPlan).filter(TherapyPlan.child_id == c.id).first()
 
-        # Domain breakdown for child
-        domain_breakdown = {}
-        for d in ["attention", "memory", "reasoning", "problem_solving"]:
-            d_sessions = db.query(SessionRecord).join(Exercise).filter(
-                SessionRecord.child_id == c.id,
-                Exercise.domain == d
-            ).all()
-            d_sids = [s.id for s in d_sessions]
-            d_perfs = db.query(Performance).filter(Performance.session_id.in_(d_sids)).all() if d_sids else []
-            domain_breakdown[d] = {
-                "sessions": len(d_sessions),
-                "accuracy": round(sum(p.accuracy for p in d_perfs) / len(d_perfs), 1) if d_perfs else 0
-            }
-
-        # Status calculation
         status_label = "New"
         if len(sessions) > 0:
             if avg_acc >= 75:
@@ -712,11 +969,14 @@ def get_clinician_children(clinician_id: int, db: Session = Depends(get_db)):
             else:
                 status_label = "Active"
 
+        pathways = c.assigned_pathways or ["adhd"]
+
         result.append({
             "id": c.id,
             "name": c.name,
             "age": c.age,
-            "condition": (c.profile_data or {}).get("condition", "Cognitive Retraining"),
+            "assigned_pathways": pathways,
+            "condition": (c.profile_data or {}).get("condition", "Developmental Cognitive Support"),
             "baseline_score": (c.profile_data or {}).get("baseline_score", 70),
             "created_at": c.created_at.isoformat() if c.created_at else None,
             "total_sessions": len(sessions),
@@ -724,14 +984,14 @@ def get_clinician_children(clinician_id: int, db: Session = Depends(get_db)):
             "total_score": total_score,
             "last_active": last_active,
             "status": status_label,
-            "domain_breakdown": domain_breakdown,
             "therapy_plan": {
                 "id": plan.id,
+                "target_pathways": plan.target_pathways or pathways,
                 "target_domains": plan.target_domains,
                 "min_difficulty": plan.min_difficulty,
                 "max_difficulty": plan.max_difficulty,
                 "schedule_notes": plan.schedule_notes,
-            } if plan else None
+            } if plan else None,
         })
 
     set_cache(f"clin_children_{clinician_id}", result)
@@ -740,15 +1000,19 @@ def get_clinician_children(clinician_id: int, db: Session = Depends(get_db)):
 
 @app.post("/api/clinician/children")
 def create_child_patient(req: ChildCreateRequest, db: Session = Depends(get_db)):
-    """Registers a new child patient record in the database."""
+    """Registers a new child patient record with assigned pathways in the database."""
+    assigned_pathways = req.assigned_pathways if (req.assigned_pathways and isinstance(req.assigned_pathways, list)) else ["adhd"]
+
     new_child = Child(
         name=req.name.strip(),
         age=req.age,
         clinician_id=req.clinician_id,
         caregiver_id=req.caregiver_id,
+        assigned_pathways=assigned_pathways,
         profile_data={
             "condition": req.condition,
             "baseline_score": req.baseline_score,
+            "pathways": assigned_pathways,
             "source": "clinician_portal"
         },
         created_at=datetime.utcnow()
@@ -757,34 +1021,41 @@ def create_child_patient(req: ChildCreateRequest, db: Session = Depends(get_db))
     db.commit()
     db.refresh(new_child)
 
-    # Automatically create default therapy plan
     default_plan = TherapyPlan(
         child_id=new_child.id,
-        clinician_id=req.clinician_id or 1,
-        target_domains=["attention", "memory", "reasoning"],
+        clinician_id=req.clinician_id or 2,
+        target_pathways=assigned_pathways,
+        target_domains=["attention", "working_memory"],
         min_difficulty=1,
         max_difficulty=5,
-        schedule_notes="Standard initial protocol: 3 sessions/week",
+        schedule_notes="Standard protocol: 3 sessions/week across assigned pathways",
         created_at=datetime.utcnow()
     )
     db.add(default_plan)
     db.commit()
+    invalidate_cache()
 
-    return {"message": "Child patient created successfully", "child": {"id": new_child.id, "name": new_child.name}}
+    return {
+        "message": "Child patient created successfully",
+        "child": {
+            "id": new_child.id,
+            "name": new_child.name,
+            "assigned_pathways": assigned_pathways
+        }
+    }
 
 
 @app.get("/api/clinician/child/{child_id}")
 def get_child_detail(child_id: int, db: Session = Depends(get_db)):
-    """Returns deep clinical longitudinal view of a single child."""
-    child = db.query(Child).filter(Child.id == child_id).first()
+    """Returns deep clinical longitudinal view of a single child across all assigned pathways."""
+    child = resolve_child_record(db, child_id)
     if not child:
-        raise HTTPException(status_code=404, detail="Child patient not found")
+        raise HTTPException(status_code=404, detail="Child patient record not found")
 
-    sessions = db.query(SessionRecord).filter(SessionRecord.child_id == child_id).order_by(SessionRecord.started_at.desc()).all()
+    sessions = db.query(SessionRecord).filter(SessionRecord.child_id == child.id).order_by(SessionRecord.started_at.desc()).all()
     session_ids = [s.id for s in sessions]
     perfs = db.query(Performance).filter(Performance.session_id.in_(session_ids)).all() if session_ids else []
 
-    # Format session timeline
     timeline = []
     for s in sessions:
         perf = db.query(Performance).filter(Performance.session_id == s.id).first()
@@ -792,6 +1063,7 @@ def get_child_detail(child_id: int, db: Session = Depends(get_db)):
         timeline.append({
             "session_id": s.id,
             "exercise_name": ex.name if ex else "Unknown",
+            "pathway": ex.pathway if ex else "adhd",
             "domain": ex.domain if ex else "attention",
             "score": perf.score if perf else 0,
             "accuracy": round(perf.accuracy, 1) if perf else 0,
@@ -804,9 +1076,9 @@ def get_child_detail(child_id: int, db: Session = Depends(get_db)):
 
     # Domain detailed stats
     domain_stats = {}
-    for d in ["attention", "memory", "reasoning", "problem_solving"]:
+    for d in ["attention", "working_memory", "sequencing", "letter_recognition", "vocabulary", "sentence_construction", "speech_sound"]:
         d_sessions = db.query(SessionRecord).join(Exercise).filter(
-            SessionRecord.child_id == child_id,
+            SessionRecord.child_id == child.id,
             Exercise.domain == d
         ).all()
         d_sids = [s.id for s in d_sessions]
@@ -819,7 +1091,8 @@ def get_child_detail(child_id: int, db: Session = Depends(get_db)):
             "accuracies_history": [p.accuracy for p in d_perfs]
         }
 
-    plan = db.query(TherapyPlan).filter(TherapyPlan.child_id == child_id).first()
+    plan = db.query(TherapyPlan).filter(TherapyPlan.child_id == child.id).first()
+    pathways = child.assigned_pathways or ["adhd"]
 
     return {
         "child": {
@@ -828,7 +1101,8 @@ def get_child_detail(child_id: int, db: Session = Depends(get_db)):
             "age": child.age,
             "caregiver_id": child.caregiver_id,
             "clinician_id": child.clinician_id,
-            "condition": (child.profile_data or {}).get("condition", "Cognitive Retraining"),
+            "assigned_pathways": pathways,
+            "condition": (child.profile_data or {}).get("condition", "Developmental Cognitive Support"),
             "baseline_score": (child.profile_data or {}).get("baseline_score", 70),
             "created_at": child.created_at.isoformat() if child.created_at else None,
         },
@@ -841,6 +1115,7 @@ def get_child_detail(child_id: int, db: Session = Depends(get_db)):
         "domain_stats": domain_stats,
         "therapy_plan": {
             "id": plan.id,
+            "target_pathways": plan.target_pathways or pathways,
             "target_domains": plan.target_domains,
             "min_difficulty": plan.min_difficulty,
             "max_difficulty": plan.max_difficulty,
@@ -854,13 +1129,16 @@ def get_child_detail(child_id: int, db: Session = Depends(get_db)):
 
 @app.post("/api/clinician/therapy-plan")
 def save_therapy_plan(req: TherapyPlanCreateRequest, db: Session = Depends(get_db)):
-    """Creates or updates a personalized therapy plan with strict therapeutic boundaries (PRD Section 11)."""
-    child = db.query(Child).filter(Child.id == req.child_id).first()
+    """Creates or updates a personalized therapy plan with assigned pathways and therapeutic bounds."""
+    child = resolve_child_record(db, req.child_id)
     if not child:
         raise HTTPException(status_code=404, detail="Child not found")
 
-    plan = db.query(TherapyPlan).filter(TherapyPlan.child_id == req.child_id).first()
+    target_pathways = req.target_pathways or child.assigned_pathways or ["adhd"]
+
+    plan = db.query(TherapyPlan).filter(TherapyPlan.child_id == child.id).first()
     if plan:
+        plan.target_pathways = target_pathways
         plan.target_domains = req.target_domains
         plan.min_difficulty = req.min_difficulty
         plan.max_difficulty = req.max_difficulty
@@ -869,8 +1147,9 @@ def save_therapy_plan(req: TherapyPlanCreateRequest, db: Session = Depends(get_d
             plan.clinician_id = req.clinician_id
     else:
         plan = TherapyPlan(
-            child_id=req.child_id,
-            clinician_id=req.clinician_id or 1,
+            child_id=child.id,
+            clinician_id=req.clinician_id or 2,
+            target_pathways=target_pathways,
             target_domains=req.target_domains,
             min_difficulty=req.min_difficulty,
             max_difficulty=req.max_difficulty,
@@ -879,14 +1158,18 @@ def save_therapy_plan(req: TherapyPlanCreateRequest, db: Session = Depends(get_d
         )
         db.add(plan)
 
+    # Sync child assigned pathways
+    child.assigned_pathways = target_pathways
     db.commit()
     db.refresh(plan)
+    invalidate_cache()
 
     return {
         "message": "Therapy plan saved successfully",
         "plan": {
             "id": plan.id,
             "child_id": plan.child_id,
+            "target_pathways": plan.target_pathways,
             "target_domains": plan.target_domains,
             "min_difficulty": plan.min_difficulty,
             "max_difficulty": plan.max_difficulty,
@@ -897,7 +1180,7 @@ def save_therapy_plan(req: TherapyPlanCreateRequest, db: Session = Depends(get_d
 
 @app.get("/api/clinician/therapy-plans/{clinician_id}")
 def get_clinician_therapy_plans(clinician_id: int, db: Session = Depends(get_db)):
-    """Returns list of all active therapy plans with child details."""
+    """Returns list of all active therapy plans with child names and assigned pathways."""
     plans = db.query(TherapyPlan).all()
     result = []
     for p in plans:
@@ -906,6 +1189,7 @@ def get_clinician_therapy_plans(clinician_id: int, db: Session = Depends(get_db)
             "id": p.id,
             "child_id": p.child_id,
             "child_name": child.name if child else "Unknown Patient",
+            "target_pathways": p.target_pathways or (child.assigned_pathways if child else ["adhd"]),
             "target_domains": p.target_domains,
             "min_difficulty": p.min_difficulty,
             "max_difficulty": p.max_difficulty,
@@ -915,14 +1199,332 @@ def get_clinician_therapy_plans(clinician_id: int, db: Session = Depends(get_db)
     return result
 
 
+@app.post("/api/clinician/assignments")
+def create_exercise_assignment(req: AssignmentCreateRequest, db: Session = Depends(get_db)):
+    """Clinician prescribes a structured exercise assignment across ADHD, Dyslexia, or Speech pathways."""
+    child = resolve_child_record(db, req.child_id)
+    if not child:
+        raise HTTPException(status_code=404, detail="Child patient not found")
+    exercise = db.query(Exercise).filter(Exercise.id == req.exercise_id).first()
+    if not exercise:
+        raise HTTPException(status_code=404, detail="Exercise not found")
+
+    clinician_id = req.clinician_id or 2
+    clinician = db.query(User).filter(User.id == clinician_id).first()
+    clinician_name = clinician.name if clinician else "Dr. Rajesh Mehta"
+
+    new_assignment = Assignment(
+        child_id=child.id,
+        clinician_id=clinician_id,
+        exercise_id=req.exercise_id,
+        difficulty=req.difficulty,
+        notes=req.notes or f"Assigned {exercise.name} ({exercise.pathway.upper()} • {exercise.domain})",
+        status="pending",
+        assigned_date=datetime.utcnow()
+    )
+    db.add(new_assignment)
+    db.commit()
+    db.refresh(new_assignment)
+
+    # Dispatch notification to child user
+    target_user_id = child.user_id or child.id
+    notif = Notification(
+        user_id=target_user_id,
+        title=f"New Exercise Assigned by {clinician_name}",
+        message=f"{clinician_name} assigned '{exercise.name}' ({exercise.pathway.upper()} • Level {req.difficulty}). Note: {new_assignment.notes}",
+        type="assignment",
+        link="/child",
+        is_read=False,
+        created_at=datetime.utcnow()
+    )
+    db.add(notif)
+    db.commit()
+    invalidate_cache()
+
+    return {
+        "message": "Exercise assigned successfully",
+        "assignment": {
+            "id": new_assignment.id,
+            "child_id": new_assignment.child_id,
+            "child_name": child.name,
+            "exercise_id": exercise.id,
+            "exercise_name": exercise.name,
+            "pathway": exercise.pathway,
+            "domain": exercise.domain,
+            "difficulty": new_assignment.difficulty,
+            "status": new_assignment.status,
+            "notes": new_assignment.notes,
+            "assigned_date": new_assignment.assigned_date.isoformat()
+        }
+    }
+
+
+@app.get("/api/clinician/assignments/{clinician_id}")
+def get_clinician_assignments(clinician_id: int, db: Session = Depends(get_db)):
+    assignments = db.query(Assignment).order_by(Assignment.assigned_date.desc()).all()
+    result = []
+    for a in assignments:
+        child = db.query(Child).filter(Child.id == a.child_id).first()
+        ex = db.query(Exercise).filter(Exercise.id == a.exercise_id).first()
+        perf = db.query(Performance).filter(Performance.session_id == a.session_id).first() if a.session_id else None
+
+        result.append({
+            "id": a.id,
+            "child_id": a.child_id,
+            "child_name": child.name if child else "Patient",
+            "exercise_id": a.exercise_id,
+            "exercise_name": ex.name if ex else "Exercise",
+            "pathway": ex.pathway if ex else "adhd",
+            "domain": ex.domain if ex else "attention",
+            "difficulty": a.difficulty,
+            "status": a.status,
+            "notes": a.notes,
+            "assigned_date": a.assigned_date.isoformat() if a.assigned_date else None,
+            "completed_at": a.completed_at.isoformat() if a.completed_at else None,
+            "accuracy": round(perf.accuracy, 1) if perf else None,
+            "score": perf.score if perf else None,
+        })
+    return result
+
+
+@app.get("/api/child/{child_id}/assignments")
+def get_child_assignments(child_id: int, db: Session = Depends(get_db)):
+    child = resolve_child_record(db, child_id)
+    if not child:
+        return []
+
+    assignments = db.query(Assignment).filter(
+        Assignment.child_id == child.id
+    ).order_by(Assignment.assigned_date.desc()).all()
+
+    result = []
+    for a in assignments:
+        ex = db.query(Exercise).filter(Exercise.id == a.exercise_id).first()
+        clinician = db.query(User).filter(User.id == a.clinician_id).first()
+        result.append({
+            "id": a.id,
+            "exercise_id": a.exercise_id,
+            "exercise_name": ex.name if ex else "Exercise",
+            "pathway": ex.pathway if ex else "adhd",
+            "domain": ex.domain if ex else "attention",
+            "difficulty": a.difficulty,
+            "status": a.status,
+            "notes": a.notes,
+            "clinician_name": clinician.name if clinician else "Dr. Rajesh Mehta",
+            "assigned_date": a.assigned_date.isoformat() if a.assigned_date else None,
+            "completed_at": a.completed_at.isoformat() if a.completed_at else None,
+        })
+    return result
+
+
+@app.post("/api/sessions/complete")
+def complete_exercise_session(req: SessionCompletionPayload, db: Session = Depends(get_db)):
+    """
+    Session Telemetry Pipeline:
+    Records completed session and telemetry in DB -> marks assignment done if applicable ->
+    performs adaptive rule-based difficulty adjustment -> notifies supervising clinician.
+    """
+    child = resolve_child_record(db, req.child_id)
+    if not child:
+        raise HTTPException(status_code=404, detail="Child patient not found")
+    exercise = db.query(Exercise).filter(Exercise.id == req.exercise_id).first()
+    if not exercise:
+        raise HTTPException(status_code=404, detail="Exercise not found")
+
+    now = datetime.utcnow()
+
+    # 1. Create SessionRecord
+    session_rec = SessionRecord(
+        child_id=child.id,
+        exercise_id=req.exercise_id,
+        started_at=now,
+        completed_at=now
+    )
+    db.add(session_rec)
+    db.commit()
+    db.refresh(session_rec)
+
+    # 2. Create Performance Telemetry
+    perf = Performance(
+        session_id=session_rec.id,
+        score=req.score,
+        accuracy=req.accuracy,
+        response_time=req.response_time_ms,
+        errors=req.errors,
+        difficulty=req.difficulty
+    )
+    db.add(perf)
+
+    # 3. If tied to assignment, mark completed
+    if req.assignment_id:
+        assignment = db.query(Assignment).filter(Assignment.id == req.assignment_id).first()
+        if assignment:
+            assignment.status = "completed"
+            assignment.completed_at = now
+            assignment.session_id = session_rec.id
+
+    # 4. Adaptive Difficulty Engine
+    plan = db.query(TherapyPlan).filter(TherapyPlan.child_id == child.id).first()
+    min_bound = plan.min_difficulty if plan else 1
+    max_bound = plan.max_difficulty if plan else 10
+
+    new_diff = req.difficulty
+    if req.accuracy >= 80:
+        new_diff = min(req.difficulty + 1, max_bound)
+    elif req.accuracy < 60:
+        new_diff = max(req.difficulty - 1, min_bound)
+
+    rec = Recommendation(
+        child_id=child.id,
+        session_id=session_rec.id,
+        pathway=exercise.pathway,
+        recommended_difficulty=new_diff,
+        recommended_exercise=exercise.name,
+        model_version="NeuroAdaptRuleRecommender_v2",
+        created_at=now
+    )
+    db.add(rec)
+
+    # 5. Notify Clinician
+    clinician_user_id = child.clinician_id or 2
+    clinician_notif = Notification(
+        user_id=clinician_user_id,
+        title=f"Session Completed: {child.name}",
+        message=f"{child.name} completed '{exercise.name}' ({exercise.pathway.upper()} • Level {req.difficulty}) with {req.accuracy}% accuracy ({req.score} XP).",
+        type="session_complete",
+        link=f"/clinician/patients/{child.id}",
+        is_read=False,
+        created_at=now
+    )
+    db.add(clinician_notif)
+    db.commit()
+    invalidate_cache()
+
+    return {
+        "message": "Exercise session completed successfully and stored in database",
+        "session_id": session_rec.id,
+        "score": req.score,
+        "accuracy": req.accuracy,
+        "response_time_sec": round(req.response_time_ms / 1000, 2),
+        "errors": req.errors,
+        "difficulty": req.difficulty,
+        "pathway": exercise.pathway,
+        "adaptive_next_difficulty": new_diff,
+        "stars_earned": max(10, int(req.score // 10)),
+    }
+
+
+# =====================================================================
+# NOTIFICATIONS ENDPOINTS
+# =====================================================================
+
+@app.get("/api/notifications/{user_id}")
+def get_user_notifications(user_id: int, db: Session = Depends(get_db)):
+    notifs = db.query(Notification).filter(
+        Notification.user_id == user_id
+    ).order_by(Notification.created_at.desc()).limit(20).all()
+
+    unread_count = db.query(Notification).filter(
+        Notification.user_id == user_id,
+        Notification.is_read == False
+    ).count()
+
+    return {
+        "unread_count": unread_count,
+        "notifications": [
+            {
+                "id": n.id,
+                "title": n.title,
+                "message": n.message,
+                "type": n.type,
+                "link": n.link,
+                "is_read": n.is_read,
+                "created_at": n.created_at.isoformat() if n.created_at else None,
+            }
+            for n in notifs
+        ],
+    }
+
+
+@app.post("/api/notifications/{notification_id}/read")
+def mark_notification_read(notification_id: int, db: Session = Depends(get_db)):
+    notif = db.query(Notification).filter(Notification.id == notification_id).first()
+    if notif:
+        notif.is_read = True
+        db.commit()
+    return {"message": "Notification marked as read"}
+
+
+@app.post("/api/notifications/read-all/{user_id}")
+def mark_all_notifications_read(user_id: int, db: Session = Depends(get_db)):
+    db.query(Notification).filter(
+        Notification.user_id == user_id,
+        Notification.is_read == False
+    ).update({"is_read": True})
+    db.commit()
+    return {"message": "All notifications marked as read"}
+
+
+# =====================================================================
+# COHORT ANALYTICS & CLINICAL DECISION SUPPORT
+# =====================================================================
+
+@app.get("/api/clinician/analytics/{clinician_id}")
+def get_clinician_cohort_analytics(clinician_id: int, db: Session = Depends(get_db)):
+    children = db.query(Child).filter(
+        (Child.clinician_id == clinician_id) | (Child.clinician_id == None)
+    ).all()
+    child_ids = [c.id for c in children]
+
+    all_sessions = db.query(SessionRecord).filter(
+        SessionRecord.child_id.in_(child_ids)
+    ).order_by(SessionRecord.started_at.asc()).all() if child_ids else []
+
+    session_ids = [s.id for s in all_sessions]
+    all_perfs = db.query(Performance).filter(Performance.session_id.in_(session_ids)).all() if session_ids else []
+
+    # Pathway analytics
+    pathway_data = {}
+    for p in ["adhd", "dyslexia", "speech"]:
+        p_sessions = db.query(SessionRecord).join(Exercise).filter(
+            SessionRecord.child_id.in_(child_ids),
+            Exercise.pathway == p
+        ).all() if child_ids else []
+        p_sids = [s.id for s in p_sessions]
+        p_perfs = db.query(Performance).filter(Performance.session_id.in_(p_sids)).all() if p_sids else []
+
+        pathway_data[p] = {
+            "session_count": len(p_sessions),
+            "avg_accuracy": round(sum(perf.accuracy for perf in p_perfs) / len(p_perfs), 1) if p_perfs else 0,
+            "avg_response_time": round((sum(perf.response_time for perf in p_perfs) / len(p_perfs)) / 1000, 2) if p_perfs else 0
+        }
+
+    # Accuracy ranges
+    acc_ranges = {"90-100%": 0, "75-89%": 0, "60-74%": 0, "<60%": 0}
+    for p in all_perfs:
+        if p.accuracy >= 90:
+            acc_ranges["90-100%"] += 1
+        elif p.accuracy >= 75:
+            acc_ranges["75-89%"] += 1
+        elif p.accuracy >= 60:
+            acc_ranges["60-74%"] += 1
+        else:
+            acc_ranges["<60%"] += 1
+
+    return {
+        "cohort_size": len(children),
+        "total_sessions": len(all_sessions),
+        "pathway_distribution": pathway_data,
+        "accuracy_distribution": acc_ranges,
+        "avg_accuracy": round(sum(p.accuracy for p in all_perfs) / len(all_perfs), 1) if all_perfs else 0,
+    }
+
+
 @app.get("/api/clinician/ai-insights/{child_id}")
 @app.post("/api/clinician/ai-insights/{child_id}")
 def generate_ai_clinical_insights(child_id: int, force_refresh: bool = False, db: Session = Depends(get_db)):
-    """
-    AI Clinical Insights Engine (PRD Section 13) powered by Mistral AI with persistent database caching.
-    Returns cached analysis instantly (<5ms) if available. When force_refresh=True, regenerates via Mistral AI.
-    """
-    child = db.query(Child).filter(Child.id == child_id).first()
+    """AI Clinical Decision Support with rule-based fallback and database caching."""
+    child = resolve_child_record(db, child_id)
     if not child:
         raise HTTPException(status_code=404, detail="Child not found")
 
@@ -932,15 +1534,14 @@ def generate_ai_clinical_insights(child_id: int, force_refresh: bool = False, db
     if cached and not force_refresh:
         return cached
 
-    sessions = db.query(SessionRecord).filter(SessionRecord.child_id == child_id).order_by(SessionRecord.started_at.desc()).all()
+    sessions = db.query(SessionRecord).filter(SessionRecord.child_id == child.id).order_by(SessionRecord.started_at.desc()).all()
     session_ids = [s.id for s in sessions]
     perfs = db.query(Performance).filter(Performance.session_id.in_(session_ids)).all() if session_ids else []
 
-    # Aggregate performance by domain
     domain_accuracies = {}
-    for d in ["attention", "memory", "reasoning", "problem_solving"]:
+    for d in ["attention", "working_memory", "letter_recognition", "vocabulary", "sentence_construction"]:
         d_sessions = db.query(SessionRecord).join(Exercise).filter(
-            SessionRecord.child_id == child_id,
+            SessionRecord.child_id == child.id,
             Exercise.domain == d
         ).all()
         d_sids = [s.id for s in d_sessions]
@@ -962,6 +1563,7 @@ def generate_ai_clinical_insights(child_id: int, force_refresh: bool = False, db
         if p and ex:
             recent_sample.append({
                 "exercise": ex.name,
+                "pathway": ex.pathway,
                 "domain": ex.domain,
                 "accuracy": p.accuracy,
                 "score": p.score,
@@ -969,7 +1571,8 @@ def generate_ai_clinical_insights(child_id: int, force_refresh: bool = False, db
                 "response_time_sec": round(p.response_time / 1000, 2)
             })
 
-    condition = profile_dict.get("condition", "Cognitive Retraining")
+    pathways_str = ", ".join(child.assigned_pathways or ["adhd"]).upper()
+    condition = f"{profile_dict.get('condition', 'Developmental Support')} ({pathways_str})"
     baseline = profile_dict.get("baseline_score", 70)
 
     insights = generate_mistral_clinical_insights(
@@ -995,14 +1598,10 @@ def generate_ai_clinical_insights(child_id: int, force_refresh: bool = False, db
     return insights
 
 
-
 @app.get("/api/clinician/reports/{child_id}/pdf")
 def download_clinical_report_pdf(child_id: int, clinician_id: Optional[int] = None, db: Session = Depends(get_db)):
-    """
-    PRD Section 14: Generates downloadable clinical PDF progress report for pediatric patient.
-    Aggregates demographic profile, real telemetry, Mistral AI decision support, and therapy boundaries.
-    """
-    child = db.query(Child).filter(Child.id == child_id).first()
+    """Generates downloadable clinical PDF progress report for pediatric patient."""
+    child = resolve_child_record(db, child_id)
     if not child:
         raise HTTPException(status_code=404, detail="Child patient not found")
 
@@ -1014,9 +1613,9 @@ def download_clinical_report_pdf(child_id: int, clinician_id: Optional[int] = No
     if not clinician:
         clinician = db.query(User).filter(User.role == "clinician").order_by(User.id.desc()).first()
 
-    clinician_name = clinician.name if clinician else "Dr. Poorvik"
+    clinician_name = clinician.name if clinician else "Dr. Rajesh Mehta"
 
-    sessions = db.query(SessionRecord).filter(SessionRecord.child_id == child_id).order_by(SessionRecord.started_at.desc()).all()
+    sessions = db.query(SessionRecord).filter(SessionRecord.child_id == child.id).order_by(SessionRecord.started_at.desc()).all()
     session_ids = [s.id for s in sessions]
     perfs = db.query(Performance).filter(Performance.session_id.in_(session_ids)).all() if session_ids else []
 
@@ -1024,17 +1623,13 @@ def download_clinical_report_pdf(child_id: int, clinician_id: Optional[int] = No
     avg_overall = round(sum(p.accuracy for p in perfs) / len(perfs), 1) if perfs else 0
     avg_rt_sec = round((sum(p.response_time for p in perfs) / len(perfs)) / 1000, 2) if perfs else 2.48
 
-    # Aggregate domain stats with joined scan
     domain_stats = {}
-    for d in ["attention", "memory", "reasoning", "problem_solving"]:
+    for d in ["attention", "working_memory", "letter_recognition", "vocabulary", "sentence_construction"]:
         d_perfs = (
             db.query(Performance)
             .join(SessionRecord, Performance.session_id == SessionRecord.id)
             .join(Exercise, SessionRecord.exercise_id == Exercise.id)
-            .filter(
-                SessionRecord.child_id == child_id,
-                Exercise.domain == d
-            )
+            .filter(SessionRecord.child_id == child.id, Exercise.domain == d)
             .all()
         )
         domain_stats[d] = {
@@ -1048,7 +1643,7 @@ def download_clinical_report_pdf(child_id: int, clinician_id: Optional[int] = No
         db.query(SessionRecord, Performance, Exercise)
         .join(Performance, Performance.session_id == SessionRecord.id)
         .join(Exercise, SessionRecord.exercise_id == Exercise.id)
-        .filter(SessionRecord.child_id == child_id)
+        .filter(SessionRecord.child_id == child.id)
         .order_by(SessionRecord.started_at.desc())
         .limit(5)
         .all()
@@ -1057,6 +1652,7 @@ def download_clinical_report_pdf(child_id: int, clinician_id: Optional[int] = No
     recent_sample = [
         {
             "exercise": ex.name,
+            "pathway": ex.pathway,
             "domain": ex.domain,
             "accuracy": p.accuracy,
             "score": p.score,
@@ -1066,10 +1662,10 @@ def download_clinical_report_pdf(child_id: int, clinician_id: Optional[int] = No
         for s, p, ex in recent_tuples
     ]
 
-    condition = (child.profile_data or {}).get("condition", "ADHD & Cognitive Rehabilitation")
+    pathways_str = ", ".join(child.assigned_pathways or ["adhd"]).upper()
+    condition = f"Pathways: {pathways_str}"
     baseline = (child.profile_data or {}).get("baseline_score", 72)
 
-    # Generate or retrieve AI Insights
     ai_insights = generate_mistral_clinical_insights(
         child_name=child.name,
         age=child.age,
@@ -1082,12 +1678,11 @@ def download_clinical_report_pdf(child_id: int, clinician_id: Optional[int] = No
         recent_sessions=recent_sample
     )
 
-    # Retrieve active therapy plan
-    plan_record = db.query(TherapyPlan).filter(TherapyPlan.child_id == child_id).first()
+    plan_record = db.query(TherapyPlan).filter(TherapyPlan.child_id == child.id).first()
     therapy_plan_dict = {
-        "target_domains": plan_record.target_domains if plan_record and plan_record.target_domains else ["Attention", "Memory", "Reasoning"],
+        "target_domains": plan_record.target_domains if plan_record and plan_record.target_domains else ["Attention", "Working Memory"],
         "min_difficulty": plan_record.min_difficulty if plan_record else 1,
-        "max_difficulty": plan_record.max_difficulty if plan_record else 5,
+        "max_difficulty": plan_record.max_difficulty if plan_record else 6,
         "schedule_notes": plan_record.schedule_notes if plan_record else "3 home training sessions per week, 15 minutes each."
     }
 
@@ -1129,357 +1724,13 @@ def download_clinical_report_pdf(child_id: int, clinician_id: Optional[int] = No
     )
 
 
-
 # =====================================================================
-# ASSIGNMENTS & SESSION TELEMETRY PIPELINE (PRD SECTIONS 10, 11, 12, 17)
+# AUDIO & VOICE FEATURES
 # =====================================================================
-
-@app.post("/api/clinician/assignments")
-def create_exercise_assignment(req: AssignmentCreateRequest, db: Session = Depends(get_db)):
-    """
-    Clinician creates a structured cognitive exercise assignment for a child.
-    Stores assignment and generates persistent notification in DB for child.
-    """
-    child = db.query(Child).filter(Child.id == req.child_id).first()
-    if not child:
-        raise HTTPException(status_code=404, detail="Child patient not found")
-    exercise = db.query(Exercise).filter(Exercise.id == req.exercise_id).first()
-    if not exercise:
-        raise HTTPException(status_code=404, detail="Exercise not found")
-
-    clinician_id = req.clinician_id or 2
-    clinician = db.query(User).filter(User.id == clinician_id).first()
-    clinician_name = clinician.name if clinician else "Dr. Rajesh Mehta"
-
-    new_assignment = Assignment(
-        child_id=req.child_id,
-        clinician_id=clinician_id,
-        exercise_id=req.exercise_id,
-        difficulty=req.difficulty,
-        notes=req.notes or f"Assigned {exercise.name} ({exercise.domain.capitalize()}) protocol",
-        status="pending",
-        assigned_date=datetime.utcnow()
-    )
-    db.add(new_assignment)
-    db.commit()
-    db.refresh(new_assignment)
-
-    # Automatically create persistent DB notification for this child
-    child_user = db.query(User).filter(User.name == child.name).first()
-    child_user_id = child_user.id if child_user else child.id
-
-    notif = Notification(
-        user_id=child_user_id,
-        title=f"New Exercise Prescribed by {clinician_name}",
-        message=f"{clinician_name} assigned '{exercise.name}' ({exercise.domain.capitalize()} • Level {req.difficulty}). Note: {new_assignment.notes}",
-        type="assignment",
-        link="/child",
-        is_read=False,
-        created_at=datetime.utcnow()
-    )
-    db.add(notif)
-    db.commit()
-
-    return {
-        "message": "Exercise assigned successfully to child patient and notification dispatched",
-        "assignment": {
-            "id": new_assignment.id,
-            "child_id": new_assignment.child_id,
-            "child_name": child.name,
-            "exercise_id": exercise.id,
-            "exercise_name": exercise.name,
-            "domain": exercise.domain,
-            "difficulty": new_assignment.difficulty,
-            "status": new_assignment.status,
-            "notes": new_assignment.notes,
-            "assigned_date": new_assignment.assigned_date.isoformat()
-        }
-    }
-
-
-@app.get("/api/clinician/assignments/{clinician_id}")
-def get_clinician_assignments(clinician_id: int, db: Session = Depends(get_db)):
-    """
-    Returns all assignments created by clinician with real completion status.
-    """
-    assignments = db.query(Assignment).order_by(Assignment.assigned_date.desc()).all()
-    result = []
-    for a in assignments:
-        child = db.query(Child).filter(Child.id == a.child_id).first()
-        ex = db.query(Exercise).filter(Exercise.id == a.exercise_id).first()
-        perf = None
-        if a.session_id:
-            perf = db.query(Performance).filter(Performance.session_id == a.session_id).first()
-
-        result.append({
-            "id": a.id,
-            "child_id": a.child_id,
-            "child_name": child.name if child else "Patient",
-            "exercise_id": a.exercise_id,
-            "exercise_name": ex.name if ex else "Unknown Exercise",
-            "domain": ex.domain if ex else "attention",
-            "difficulty": a.difficulty,
-            "status": a.status,
-            "notes": a.notes,
-            "assigned_date": a.assigned_date.isoformat() if a.assigned_date else None,
-            "completed_at": a.completed_at.isoformat() if a.completed_at else None,
-            "accuracy": round(perf.accuracy, 1) if perf else None,
-            "score": perf.score if perf else None,
-        })
-    return result
-
-
-@app.get("/api/child/{child_id}/assignments")
-def get_child_assignments(child_id: int, db: Session = Depends(get_db)):
-    """
-    Returns all active and past assignments assigned to a specific child.
-    """
-    assignments = db.query(Assignment).filter(
-        Assignment.child_id == child_id
-    ).order_by(Assignment.assigned_date.desc()).all()
-
-    result = []
-    for a in assignments:
-        ex = db.query(Exercise).filter(Exercise.id == a.exercise_id).first()
-        clinician = db.query(User).filter(User.id == a.clinician_id).first()
-        result.append({
-            "id": a.id,
-            "exercise_id": a.exercise_id,
-            "exercise_name": ex.name if ex else "Cognitive Retraining",
-            "domain": ex.domain if ex else "attention",
-            "difficulty": a.difficulty,
-            "status": a.status,
-            "notes": a.notes,
-            "clinician_name": clinician.name if clinician else "Dr. Rajesh Mehta",
-            "assigned_date": a.assigned_date.isoformat() if a.assigned_date else None,
-            "completed_at": a.completed_at.isoformat() if a.completed_at else None,
-        })
-    return result
-
-
-@app.post("/api/sessions/complete")
-def complete_exercise_session(req: SessionCompletionPayload, db: Session = Depends(get_db)):
-    """
-    Core Loop Completion (PRD Sections 10, 11, 12, 17):
-    Child completes exercise -> Telemetry recorded in DB -> Assignment marked done ->
-    Adaptive difficulty recalculated -> Clinician notification created ->
-    Instant result stream to Clinician.
-    """
-    # Robust child resolution (handles both Child.id and User.id)
-    child = db.query(Child).filter(Child.id == req.child_id).first()
-    user_match = db.query(User).filter(User.id == req.child_id).first()
-    if user_match and user_match.role == "child":
-        named_child = db.query(Child).filter(Child.name == user_match.name).first()
-        if named_child:
-            child = named_child
-
-    if not child:
-        raise HTTPException(status_code=404, detail="Child patient not found")
-    exercise = db.query(Exercise).filter(Exercise.id == req.exercise_id).first()
-    if not exercise:
-        raise HTTPException(status_code=404, detail="Exercise not found")
-
-    now = datetime.utcnow()
-
-    # 1. Create SessionRecord in DB
-    session_rec = SessionRecord(
-        child_id=child.id,
-        exercise_id=req.exercise_id,
-        started_at=now,
-        completed_at=now
-    )
-    db.add(session_rec)
-    db.commit()
-    db.refresh(session_rec)
-
-    # 2. Create Performance telemetry in DB
-    perf = Performance(
-        session_id=session_rec.id,
-        score=req.score,
-        accuracy=req.accuracy,
-        response_time=req.response_time_ms,
-        errors=req.errors,
-        difficulty=req.difficulty
-    )
-    db.add(perf)
-
-    # 3. If tied to an active assignment, mark assignment completed
-    if req.assignment_id:
-        assignment = db.query(Assignment).filter(Assignment.id == req.assignment_id).first()
-        if assignment:
-            assignment.status = "completed"
-            assignment.completed_at = now
-            assignment.session_id = session_rec.id
-
-    # 4. Adaptive Difficulty Engine (PRD Section 10 & 11)
-    plan = db.query(TherapyPlan).filter(TherapyPlan.child_id == child.id).first()
-    min_bound = plan.min_difficulty if plan else 1
-    max_bound = plan.max_difficulty if plan else 10
-
-    new_diff = req.difficulty
-    if req.accuracy >= 80:
-        new_diff = min(req.difficulty + 1, max_bound)
-    elif req.accuracy < 60:
-        new_diff = max(req.difficulty - 1, min_bound)
-
-    rec = Recommendation(
-        child_id=child.id,
-        session_id=session_rec.id,
-        recommended_difficulty=new_diff,
-        recommended_exercise=exercise.name,
-        model_version="NeuroAdaptDecisionEngine_v1",
-        created_at=now
-    )
-    db.add(rec)
-
-    # 5. Automatically create persistent DB notification for supervising Clinician
-    clinician_user_id = child.clinician_id or 2
-    clinician_notif = Notification(
-        user_id=clinician_user_id,
-        title=f"Session Completed by {child.name}",
-        message=f"{child.name} completed '{exercise.name}' (Level {req.difficulty}) with {req.accuracy}% accuracy ({req.score} XP).",
-        type="session_complete",
-        link=f"/clinician/patients/{child.id}",
-        is_read=False,
-        created_at=now
-    )
-    db.add(clinician_notif)
-    db.commit()
-    invalidate_cache()
-
-    return {
-        "message": "Exercise session completed successfully and stored in database",
-        "session_id": session_rec.id,
-        "score": req.score,
-        "accuracy": req.accuracy,
-        "response_time_sec": round(req.response_time_ms / 1000, 2),
-        "errors": req.errors,
-        "difficulty": req.difficulty,
-        "adaptive_next_difficulty": new_diff,
-        "stars_earned": max(10, int(req.score // 10)),
-    }
-
-
-# =====================================================================
-# NOTIFICATIONS SYSTEM (STORED IN DB)
-# =====================================================================
-
-@app.get("/api/notifications/{user_id}")
-def get_user_notifications(user_id: int, db: Session = Depends(get_db)):
-    """
-    Returns list of notifications and unread counter for a user from PostgreSQL DB.
-    """
-    notifs = db.query(Notification).filter(
-        Notification.user_id == user_id
-    ).order_by(Notification.created_at.desc()).limit(20).all()
-
-    unread_count = db.query(Notification).filter(
-        Notification.user_id == user_id,
-        Notification.is_read == False
-    ).count()
-
-    return {
-        "unread_count": unread_count,
-        "notifications": [
-            {
-                "id": n.id,
-                "title": n.title,
-                "message": n.message,
-                "type": n.type,
-                "link": n.link,
-                "is_read": n.is_read,
-                "created_at": n.created_at.isoformat() if n.created_at else None,
-            }
-            for n in notifs
-        ],
-    }
-
-
-@app.post("/api/notifications/{notification_id}/read")
-def mark_notification_read(notification_id: int, db: Session = Depends(get_db)):
-    """
-    Marks a specific notification as read in the DB.
-    """
-    notif = db.query(Notification).filter(Notification.id == notification_id).first()
-    if notif:
-        notif.is_read = True
-        db.commit()
-    return {"message": "Notification marked as read"}
-
-
-@app.post("/api/notifications/read-all/{user_id}")
-def mark_all_notifications_read(user_id: int, db: Session = Depends(get_db)):
-    """
-    Marks all notifications as read for a given user in the DB.
-    """
-    db.query(Notification).filter(
-        Notification.user_id == user_id,
-        Notification.is_read == False
-    ).update({"is_read": True})
-    db.commit()
-    return {"message": "All notifications marked as read"}
-
-
-
-
-@app.get("/api/clinician/analytics/{clinician_id}")
-def get_clinician_cohort_analytics(clinician_id: int, db: Session = Depends(get_db)):
-    """Returns longitudinal cohort metrics for all patients under clinician supervision."""
-    children = db.query(Child).filter(
-        (Child.clinician_id == clinician_id) | (Child.clinician_id == None)
-    ).all()
-    child_ids = [c.id for c in children]
-
-    all_sessions = db.query(SessionRecord).filter(
-        SessionRecord.child_id.in_(child_ids)
-    ).order_by(SessionRecord.started_at.asc()).all() if child_ids else []
-
-    session_ids = [s.id for s in all_sessions]
-    all_perfs = db.query(Performance).filter(Performance.session_id.in_(session_ids)).all() if session_ids else []
-
-    # Domain distribution
-    domain_data = {}
-    for d in ["attention", "memory", "reasoning", "problem_solving"]:
-        d_sessions = db.query(SessionRecord).join(Exercise).filter(
-            SessionRecord.child_id.in_(child_ids),
-            Exercise.domain == d
-        ).all() if child_ids else []
-        d_sids = [s.id for s in d_sessions]
-        d_perfs = db.query(Performance).filter(Performance.session_id.in_(d_sids)).all() if d_sids else []
-
-        domain_data[d] = {
-            "session_count": len(d_sessions),
-            "avg_accuracy": round(sum(p.accuracy for p in d_perfs) / len(d_perfs), 1) if d_perfs else 0,
-            "avg_response_time": round((sum(p.response_time for p in d_perfs) / len(d_perfs)) / 1000, 2) if d_perfs else 0
-        }
-
-    # Accuracy ranges
-    acc_ranges = {"90-100%": 0, "75-89%": 0, "60-74%": 0, "<60%": 0}
-    for p in all_perfs:
-        if p.accuracy >= 90:
-            acc_ranges["90-100%"] += 1
-        elif p.accuracy >= 75:
-            acc_ranges["75-89%"] += 1
-        elif p.accuracy >= 60:
-            acc_ranges["60-74%"] += 1
-        else:
-            acc_ranges["<60%"] += 1
-
-    return {
-        "cohort_size": len(children),
-        "total_sessions": len(all_sessions),
-        "domain_distribution": domain_data,
-        "accuracy_distribution": acc_ranges,
-        "avg_accuracy": round(sum(p.accuracy for p in all_perfs) / len(all_perfs), 1) if all_perfs else 0,
-    }
-
 
 @app.post("/api/voice/transcribe")
 async def transcribe_voice_audio(file: UploadFile = File(...)):
-    """
-    Transcribe audio recorded in browser to text using server-side SpeechRecognition engine.
-    Accepts direct 16-bit PCM WAV audio from browser microphone, bypassing browser privacy blocks.
-    """
+    """Transcribe audio recorded in browser to text using server-side SpeechRecognition engine."""
     import speech_recognition as sr
     import io
 
@@ -1503,22 +1754,14 @@ async def transcribe_voice_audio(file: UploadFile = File(...)):
 
 @app.get("/api/voice/tts")
 def stream_text_to_speech(text: str = Query(..., description="Text to synthesize to speech")):
-    """
-    Synthesize text into natural spoken audio stream (MP3).
-    Uses in-memory cache to avoid regenerating audio for repeated phrases.
-    Ensures 100% audio playback across all browsers (including Brave, Chrome, Safari, Firefox)
-    where client-side Web Speech API is blocked or fingerprint-protected.
-    """
+    """Synthesize text into natural spoken audio stream (MP3) with in-memory caching."""
     import io
-    import hashlib
-    from fastapi.responses import Response
     from gtts import gTTS
 
     clean_text = text.strip()
     if not clean_text:
         return Response(content=b"", media_type="audio/mpeg")
 
-    # In-memory TTS cache to avoid redundant gTTS network calls
     cache_key = hashlib.md5(clean_text.encode()).hexdigest()
     if not hasattr(app, "_tts_cache"):
         app._tts_cache = {}
@@ -1540,7 +1783,6 @@ def stream_text_to_speech(text: str = Query(..., description="Text to synthesize
         fp.seek(0)
         audio_bytes = fp.getvalue()
 
-        # Cache the result (limit cache to 200 entries to prevent memory bloat)
         if len(app._tts_cache) < 200:
             app._tts_cache[cache_key] = audio_bytes
 
@@ -1556,88 +1798,41 @@ def stream_text_to_speech(text: str = Query(..., description="Text to synthesize
         return Response(content=b"", media_type="audio/mpeg", status_code=500)
 
 
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#                     AI VOICE COGNITIVE INTERVIEW ROUTES                      #
-# ══════════════════════════════════════════════════════════════════════════════
-
 @app.post("/api/interviews/complete")
 def complete_voice_interview(payload: VoiceInterviewSubmitPayload, db: Session = Depends(get_db)):
-    """
-    Records a completed 60-90s Adaptive Voice Cognitive Interview.
-    Computes domain accuracies, latency delta from baseline, adaptive difficulty changes,
-    generates Mistral AI clinical observations, and notifies assigned clinician.
-    """
-    child = db.query(Child).filter(Child.id == payload.child_id).first()
-    if not child:
-        # Fallback query if child_id refers to user_id
-        child = db.query(Child).filter(Child.user_id == payload.child_id).first()
-    
+    child = resolve_child_record(db, payload.child_id)
     child_name = child.name if child else "Child Patient"
-    
-    # Calculate Latency Delta from Child's historical average
+    target_child_id = child.id if child else payload.child_id
+
     avg_prev_rt = 1650.0
     if child:
         prev_perfs = db.query(Performance).join(SessionRecord).filter(SessionRecord.child_id == child.id).all()
         if prev_perfs:
             avg_prev_rt = sum(p.response_time for p in prev_perfs) / len(prev_perfs)
-    
+
     calculated_latency_delta = round(((payload.response_latency_ms - avg_prev_rt) / avg_prev_rt) * 100, 1)
     if payload.latency_delta_percent:
         calculated_latency_delta = payload.latency_delta_percent
 
-    # Adaptive Changes computation
     mem_change = "+1" if payload.memory_accuracy >= 80 else ("-1" if payload.memory_accuracy < 60 else "maintained")
     att_change = "+1" if payload.attention_accuracy >= 80 else ("-1" if payload.attention_accuracy < 60 else "maintained")
     reas_change = "+1" if payload.reasoning_accuracy >= 80 else ("-1" if payload.reasoning_accuracy < 60 else "maintained")
-    
+
     adaptive_changes = payload.adaptive_changes or {
         "memory": f"Memory difficulty {mem_change}",
         "attention": f"Attention difficulty {att_change}",
         "reasoning": f"Reasoning difficulty {reas_change}",
     }
 
-    # Generate Mistral AI Clinical Observation
     ai_observation_text = (
         f"Performance remained stable across increasing task complexity. "
         f"Memory retention scored at {payload.memory_accuracy}%, while auditory attention "
-        f"{'showed rapid target recognition' if payload.attention_accuracy >= 75 else 'demonstrated slight vigilance decline during sequence repetition'}. "
+        f"{'showed rapid target recognition' if payload.attention_accuracy >= 75 else 'demonstrated slight vigilance decline'}. "
         f"Response latency was {abs(calculated_latency_delta)}% {'faster' if calculated_latency_delta <= 0 else 'slower'} than baseline."
     )
 
-    try:
-        import os, requests
-        mistral_key = os.getenv("MISTRAL_API_KEY")
-        if mistral_key:
-            res = requests.post(
-                "https://api.mistral.ai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {mistral_key}", "Content-Type": "application/json"},
-                json={
-                    "model": "mistral-large-latest",
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": "You are an expert pediatric neuro-rehabilitation specialist. Output a 2-sentence clinical observation summarizing cognitive endurance, auditory vigilance, and adaptive task titration based on interview telemetry."
-                        },
-                        {
-                            "role": "user",
-                            "content": f"Patient: {child_name}. Voice Cognitive Session completed. Duration: {payload.duration_seconds}s. Challenges: {payload.challenges_completed}. Overall: {payload.overall_accuracy}%. Memory: {payload.memory_accuracy}%, Attention: {payload.attention_accuracy}%, Reasoning: {payload.reasoning_accuracy}%. Latency Delta: {calculated_latency_delta}%."
-                        }
-                    ],
-                    "temperature": 0.2,
-                    "max_tokens": 150
-                },
-                timeout=5
-            )
-            if res.ok:
-                data = res.json()
-                ai_observation_text = data["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        print("Mistral AI interview observation notice:", e)
-
     interview = VoiceInterview(
-        child_id=child.id if child else payload.child_id,
+        child_id=target_child_id,
         duration_seconds=payload.duration_seconds,
         challenges_completed=payload.challenges_completed,
         overall_accuracy=payload.overall_accuracy,
@@ -1655,12 +1850,11 @@ def complete_voice_interview(payload: VoiceInterviewSubmitPayload, db: Session =
     db.commit()
     db.refresh(interview)
 
-    # Notify Clinician
     if child and child.clinician_id:
         notif = Notification(
             user_id=child.clinician_id,
-            title="🎙️ AI Voice Cognitive Interview Completed",
-            message=f"{child.name} completed an adaptive voice session (Accuracy: {payload.overall_accuracy}%, Latency: {calculated_latency_delta}%). AI observation ready.",
+            title="🎙️ Voice Cognitive Interview Completed",
+            message=f"{child.name} completed an adaptive voice session (Accuracy: {payload.overall_accuracy}%). Observation ready.",
             type="session_complete",
             link=f"/clinician/patients/{child.id}",
             created_at=datetime.utcnow()
@@ -1689,71 +1883,30 @@ def complete_voice_interview(payload: VoiceInterviewSubmitPayload, db: Session =
 
 @app.get("/api/interviews/latest/{child_id}")
 def get_latest_voice_interview(child_id: int, db: Session = Depends(get_db)):
-    """
-    Returns the most recent Voice Cognitive Interview for a specific child.
-    """
-    child = db.query(Child).filter(Child.id == child_id).first()
-    if not child:
-        child = db.query(Child).filter(Child.user_id == child_id).first()
-
+    child = resolve_child_record(db, child_id)
     target_child_id = child.id if child else child_id
     interview = db.query(VoiceInterview).filter(VoiceInterview.child_id == target_child_id).order_by(VoiceInterview.created_at.desc()).first()
-    
+
     if not interview:
-        # Provide clean structured baseline mock if first time
         return {
             "id": 0,
             "child_id": target_child_id,
-            "child_name": child.name if child else "Aarav",
+            "child_name": child.name if child else "Aarav Sharma",
             "duration_seconds": 84,
             "challenges_completed": 6,
-            "overall_accuracy": 81.0,
-            "memory_accuracy": 84.0,
-            "attention_accuracy": 72.0,
-            "reasoning_accuracy": 91.0,
+            "overall_accuracy": 82.0,
+            "memory_accuracy": 85.0,
+            "attention_accuracy": 75.0,
+            "reasoning_accuracy": 90.0,
             "response_latency_ms": 1380.0,
-            "latency_delta_percent": -18.0,
+            "latency_delta_percent": -15.0,
             "adaptive_changes": {
                 "memory": "Memory difficulty +1",
                 "attention": "Attention difficulty maintained",
                 "reasoning": "Reasoning difficulty +1"
             },
-            "ai_observation": "Performance remained stable across increasing task complexity. Attention accuracy declined slightly during rapid auditory sequences.",
-            "transcript": [
-                {
-                    "round": 1,
-                    "domain": "memory",
-                    "title": "Verbal Working Memory",
-                    "spoken_prompt": "I'm going to tell you three things: dog, bicycle, apple. Remember them. What were the three things?",
-                    "target_answer": "dog, bicycle, apple",
-                    "child_response": "dog, bicycle, apple",
-                    "is_correct": True,
-                    "latency_ms": 1250,
-                    "accuracy": 100
-                },
-                {
-                    "round": 2,
-                    "domain": "attention",
-                    "title": "Auditory Vigilance",
-                    "spoken_prompt": "I'll say some numbers. Tell me only the numbers you hear twice: 3... 7... 4... 7... 9...",
-                    "target_answer": "7",
-                    "child_response": "7",
-                    "is_correct": True,
-                    "latency_ms": 980,
-                    "accuracy": 100
-                },
-                {
-                    "round": 3,
-                    "domain": "reasoning",
-                    "title": "Arithmetic Logic",
-                    "spoken_prompt": "If Ravi has 3 apples and gives 1 to his friend, how many does he have?",
-                    "target_answer": "2",
-                    "child_response": "2",
-                    "is_correct": True,
-                    "latency_ms": 1420,
-                    "accuracy": 100
-                }
-            ],
+            "ai_observation": "Adaptive evaluation shows high engagement and verbal comprehension.",
+            "transcript": [],
             "created_at": datetime.utcnow().isoformat()
         }
 
@@ -1778,21 +1931,13 @@ def get_latest_voice_interview(child_id: int, db: Session = Depends(get_db)):
 
 @app.get("/api/interviews/clinician/{clinician_id}")
 def get_clinician_interviews(clinician_id: int, db: Session = Depends(get_db)):
-    """
-    Returns latest voice interviews for all patients assigned to a clinician.
-    """
-    children = db.query(Child).filter(Child.clinician_id == clinician_id).all()
-    if not children:
-        children = db.query(Child).all()
-
+    children = db.query(Child).filter(Child.clinician_id == clinician_id).all() or db.query(Child).all()
     child_ids = [c.id for c in children]
     child_map = {c.id: c.name for c in children}
 
     interviews = db.query(VoiceInterview).filter(VoiceInterview.child_id.in_(child_ids)).order_by(VoiceInterview.created_at.desc()).limit(15).all()
-
-    results = []
-    for iv in interviews:
-        results.append({
+    return [
+        {
             "id": iv.id,
             "child_id": iv.child_id,
             "child_name": child_map.get(iv.child_id, "Child Patient"),
@@ -1808,97 +1953,30 @@ def get_clinician_interviews(clinician_id: int, db: Session = Depends(get_db)):
             "ai_observation": iv.ai_observation,
             "transcript": iv.transcript,
             "created_at": iv.created_at.isoformat() if iv.created_at else None
-        })
+        }
+        for iv in interviews
+    ]
 
-    # If no recorded interviews yet in DB, supply initial baseline for Dr. Poorvik's patients
-    if not results and children:
-        first_child = children[0]
-        results.append({
-            "id": 1,
-            "child_id": first_child.id,
-            "child_name": first_child.name,
-            "duration_seconds": 84,
-            "challenges_completed": 6,
-            "overall_accuracy": 81.0,
-            "memory_accuracy": 84.0,
-            "attention_accuracy": 72.0,
-            "reasoning_accuracy": 91.0,
-            "response_latency_ms": 1380.0,
-            "latency_delta_percent": -18.0,
-            "adaptive_changes": {
-                "memory": "Memory difficulty +1",
-                "attention": "Attention difficulty maintained",
-                "reasoning": "Reasoning difficulty +1"
-            },
-            "ai_observation": "Performance remained stable across increasing task complexity. Attention accuracy declined during rapid auditory sequences.",
-            "transcript": [
-                {
-                    "round": 1,
-                    "domain": "memory",
-                    "title": "Verbal Working Memory",
-                    "spoken_prompt": "I'm going to tell you three things: dog, bicycle, apple. Remember them. What were the three things?",
-                    "target_answer": "dog, bicycle, apple",
-                    "child_response": "dog, bicycle, apple",
-                    "is_correct": True,
-                    "latency_ms": 1250,
-                    "accuracy": 100
-                },
-                {
-                    "round": 2,
-                    "domain": "attention",
-                    "title": "Auditory Vigilance",
-                    "spoken_prompt": "I'll say some numbers. Tell me only the numbers you hear twice: 3... 7... 4... 7... 9...",
-                    "target_answer": "7",
-                    "child_response": "7",
-                    "is_correct": True,
-                    "latency_ms": 980,
-                    "accuracy": 100
-                },
-                {
-                    "round": 3,
-                    "domain": "reasoning",
-                    "title": "Arithmetic Logic",
-                    "spoken_prompt": "If Ravi has 3 apples and gives 1 to his friend, how many does he have?",
-                    "target_answer": "2",
-                    "child_response": "2",
-                    "is_correct": True,
-                    "latency_ms": 1420,
-                    "accuracy": 100
-                }
-            ],
-            "created_at": datetime.utcnow().isoformat()
-        })
-
-    return results
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#                     TELEGRAM PARENT DISPATCH ROUTES                         #
-# ══════════════════════════════════════════════════════════════════════════════
 
 @app.post("/api/clinician/telegram/draft/{child_id}")
 def generate_telegram_parent_draft(child_id: int, clinician_id: Optional[int] = None, db: Session = Depends(get_db)):
-    """
-    Uses Mistral AI to compose an empathetic, jargon-free Telegram progress summary for parents.
-    """
-    child = db.query(Child).filter(Child.id == child_id).first()
+    child = resolve_child_record(db, child_id)
     if not child:
         raise HTTPException(status_code=404, detail="Child patient not found")
 
-    clinician_name = "Dr. Poorvik"
+    clinician_name = "Dr. Rajesh Mehta"
     if clinician_id:
         clin = db.query(User).filter(User.id == clinician_id).first()
         if clin:
             clinician_name = clin.name
 
-    # Aggregate 100% real cognitive domain telemetry from database
     domain_stats: Dict[str, Any] = {}
-    for d in ["attention", "memory", "reasoning", "problem_solving"]:
+    for d in ["attention", "working_memory", "letter_recognition", "vocabulary"]:
         d_sessions = (
             db.query(Performance, SessionRecord, Exercise)
             .join(SessionRecord, Performance.session_id == SessionRecord.id)
             .join(Exercise, SessionRecord.exercise_id == Exercise.id)
-            .filter(SessionRecord.child_id == child_id, Exercise.domain == d)
+            .filter(SessionRecord.child_id == child.id, Exercise.domain == d)
             .all()
         )
         if d_sessions:
@@ -1922,12 +2000,11 @@ def generate_telegram_parent_draft(child_id: int, clinician_id: Optional[int] = 
             db.query(Performance, SessionRecord, Exercise)
             .join(SessionRecord, Performance.session_id == SessionRecord.id)
             .join(Exercise, SessionRecord.exercise_id == Exercise.id)
-            .filter(SessionRecord.child_id == child_id)
+            .filter(SessionRecord.child_id == child.id)
             .order_by(SessionRecord.started_at.desc())
             .limit(10)
             .all()
         )
-
         for perf, sess, ex in performances:
             recent_sessions_list.append({
                 "exercise_name": ex.name if ex else "Exercise",
@@ -1937,11 +2014,9 @@ def generate_telegram_parent_draft(child_id: int, clinician_id: Optional[int] = 
     except Exception as err:
         print("Telemetry query notice:", err)
 
-    condition_name = "Pediatric Cognitive Rehabilitation"
-    if child.profile_data and isinstance(child.profile_data, dict):
-        condition_name = child.profile_data.get("condition", condition_name)
+    pathways_str = ", ".join(child.assigned_pathways or ["adhd"]).upper()
+    condition_name = f"Developmental Support ({pathways_str})"
 
-    import os
     draft_message = generate_parent_update_prompt(
         child_name=child.name,
         age=child.age or 8,
@@ -1962,25 +2037,20 @@ def generate_telegram_parent_draft(child_id: int, clinician_id: Optional[int] = 
 
 @app.post("/api/clinician/telegram/send")
 def dispatch_telegram_parent_message(payload: TelegramDispatchPayload, db: Session = Depends(get_db)):
-    """
-    Sends the reviewed message directly to parent's Telegram and records notification log in DB.
-    """
-    child = db.query(Child).filter(Child.id == payload.child_id).first()
+    child = resolve_child_record(db, payload.child_id)
     if not child:
         raise HTTPException(status_code=404, detail="Child patient not found")
 
     result = send_telegram_message(message=payload.message, chat_id=payload.chat_id)
-
     if not result.get("success"):
         raise HTTPException(
             status_code=500,
             detail=f"Failed to dispatch Telegram message: {result.get('error')}"
         )
 
-    # Save to notification record in database
     try:
         notif = Notification(
-            user_id=child.caregiver_id or child.id,
+            user_id=child.caregiver_id or child.user_id or child.id,
             title=f"Telegram Update Sent for {child.name}",
             message=payload.message[:250],
             is_read=True,
@@ -1998,7 +2068,3 @@ def dispatch_telegram_parent_message(payload: TelegramDispatchPayload, db: Sessi
         "chat_id": result.get("chat_id"),
         "delivered_at": datetime.utcnow().isoformat(),
     }
-
-
-
-

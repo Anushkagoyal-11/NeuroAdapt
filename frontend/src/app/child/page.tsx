@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import Link from "next/link";
 import {
   Brain,
   Target,
@@ -17,15 +18,16 @@ import {
   Sparkles,
   ArrowUpRight,
   CheckCircle2,
-  CircleDot,
   Calendar,
   ClipboardList,
-  UserCheck,
+  BookOpen,
   Mic,
+  Smile,
+  Shuffle,
+  ShieldCheck,
 } from "lucide-react";
-import { useChildContext } from "./layout";
+import { useChildContext } from "./ChildContext";
 import InteractiveExerciseGame, { ExercisePlayConfig } from "./components/InteractiveExerciseGame";
-import VoiceInterviewModal from "./components/VoiceInterviewModal";
 
 /* ═══════════════════════════════════════════════════════════════════════ */
 /*                       TYPES                                           */
@@ -35,6 +37,7 @@ interface ActiveAssignment {
   id: number;
   exercise_id: number;
   exercise_name: string;
+  pathway?: string;
   domain: string;
   difficulty: number;
   notes: string;
@@ -42,9 +45,21 @@ interface ActiveAssignment {
   assigned_date: string | null;
 }
 
+interface RecommendedExercise {
+  exercise_id: number;
+  name: string;
+  pathway: string;
+  domain: string;
+  difficulty: number;
+  description: string;
+  instructions: string;
+  reason: string;
+}
+
 interface DashboardData {
-  user: { id: number; name: string; email: string; role: string };
+  user: { id: number; name: string; email: string; role: string; age?: number };
   child_id: number | null;
+  assigned_pathways: string[];
   stats: {
     total_sessions: number;
     today_sessions: number;
@@ -54,21 +69,27 @@ interface DashboardData {
     total_time_min: number;
     streak_days: number;
   };
+  pathway_stats?: Record<string, { sessions: number; avg_accuracy: number }>;
+  domain_stats: Record<
+    string,
+    {
+      label: string;
+      pathway: string;
+      sessions: number;
+      accuracy: number;
+      avg_score: number;
+      level: number;
+      next_level: number;
+      progress: number;
+    }
+  >;
   active_assignments?: ActiveAssignment[];
-  domain_stats: Record<string, {
-    sessions: number;
-    accuracy: number;
-    avg_score: number;
-    level: number;
-    next_level?: number;
-    next_level_progress?: number;
-    next_level_hint?: string;
-    progress: number;
-    max_difficulty: number;
-  }>;
+  recommended_exercises?: RecommendedExercise[];
   recent_sessions: Array<{
     id: number;
+    exercise_id: number;
     exercise: string;
+    pathway: string;
     domain: string;
     score: number;
     accuracy: number;
@@ -83,89 +104,58 @@ interface DashboardData {
 interface ExerciseData {
   id: number;
   name: string;
+  pathway: string;
   domain: string;
   difficulty: number;
+  description?: string;
+  instructions?: string;
   configuration: Record<string, unknown>;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════ */
-/*                        ANIMATED PROGRESS RING                         */
+/*                     PATHWAY CONFIG HELPERS                            */
 /* ═══════════════════════════════════════════════════════════════════════ */
 
-function ProgressRing({
-  progress,
-  size = 72,
-  strokeWidth = 5,
-  color = "#7C3AED",
-}: {
-  progress: number;
-  size?: number;
-  strokeWidth?: number;
-  color?: string;
-}) {
-  const radius = (size - strokeWidth) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const [animatedProgress, setAnimatedProgress] = useState(0);
-
-  useEffect(() => {
-    const timer = setTimeout(() => setAnimatedProgress(progress), 300);
-    return () => clearTimeout(timer);
-  }, [progress]);
-
-  const dashOffset = circumference - (animatedProgress / 100) * circumference;
-
-  return (
-    <svg width={size} height={size} className="cd-progress-ring">
-      <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="#F3EFFE" strokeWidth={strokeWidth} />
-      <circle
-        cx={size / 2}
-        cy={size / 2}
-        r={radius}
-        fill="none"
-        stroke={color}
-        strokeWidth={strokeWidth}
-        strokeDasharray={circumference}
-        strokeDashoffset={dashOffset}
-        strokeLinecap="round"
-        transform={`rotate(-90 ${size / 2} ${size / 2})`}
-      />
-    </svg>
-  );
+function getPathwayBadge(pathway: string) {
+  switch (pathway?.toLowerCase()) {
+    case "adhd":
+      return {
+        label: "ADHD Pathway",
+        short: "ADHD",
+        bg: "#F3E8FF",
+        border: "#DDD6FE",
+        color: "#7C3AED",
+        icon: <Activity className="h-4 w-4" />,
+      };
+    case "dyslexia":
+      return {
+        label: "Dyslexia Pathway",
+        short: "Dyslexia",
+        bg: "#EFF6FF",
+        border: "#BFDBFE",
+        color: "#2563EB",
+        icon: <BookOpen className="h-4 w-4" />,
+      };
+    case "speech":
+      return {
+        label: "Speech & Language",
+        short: "Speech",
+        bg: "#ECFDF5",
+        border: "#A7F3D0",
+        color: "#059669",
+        icon: <Mic className="h-4 w-4" />,
+      };
+    default:
+      return {
+        label: "General Skill",
+        short: "Skill",
+        bg: "#F3F4F6",
+        border: "#E5E7EB",
+        color: "#4B5563",
+        icon: <Sparkles className="h-4 w-4" />,
+      };
+  }
 }
-
-/* ═══════════════════════════════════════════════════════════════════════ */
-/*                     DOMAIN CONFIG & CARDS                             */
-/* ═══════════════════════════════════════════════════════════════════════ */
-
-const DOMAIN_CONFIG: Record<
-  string,
-  { label: string; color: string; bgGradient: string; icon: React.ReactNode }
-> = {
-  attention: {
-    label: "Attention",
-    color: "#7C3AED",
-    bgGradient: "linear-gradient(135deg, #7C3AED 0%, #A78BFA 100%)",
-    icon: <Target className="h-5 w-5" strokeWidth={1.8} />,
-  },
-  memory: {
-    label: "Memory",
-    color: "#8B5CF6",
-    bgGradient: "linear-gradient(135deg, #8B5CF6 0%, #C4B5FD 100%)",
-    icon: <Brain className="h-5 w-5" strokeWidth={1.8} />,
-  },
-  reasoning: {
-    label: "Reasoning",
-    color: "#6D28D9",
-    bgGradient: "linear-gradient(135deg, #6D28D9 0%, #8B5CF6 100%)",
-    icon: <Lightbulb className="h-5 w-5" strokeWidth={1.8} />,
-  },
-  problem_solving: {
-    label: "Problem Solving",
-    color: "#9333EA",
-    bgGradient: "linear-gradient(135deg, #9333EA 0%, #C084FC 100%)",
-    icon: <Puzzle className="h-5 w-5" strokeWidth={1.8} />,
-  },
-};
 
 /* ═══════════════════════════════════════════════════════════════════════ */
 /*                        WELCOME HERO                                   */
@@ -174,25 +164,18 @@ const DOMAIN_CONFIG: Record<
 function WelcomeHero({
   userName,
   stats,
+  assignedPathways,
   recommended,
   onStartSession,
 }: {
   userName: string;
   stats: DashboardData["stats"];
-  recommended?: {
-    name: string;
-    domain: string;
-    level: number;
-    nextLevel?: number;
-    progressToNext?: number;
-    hint?: string;
-  } | null;
+  assignedPathways: string[];
+  recommended?: RecommendedExercise | null;
   onStartSession: () => void;
 }) {
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good Morning" : hour < 17 ? "Good Afternoon" : "Good Evening";
-  const nextLvl = recommended?.nextLevel || (recommended ? Math.min(10, recommended.level + 1) : 2);
-  const progPct = recommended?.progressToNext !== undefined ? recommended.progressToNext : 65;
 
   return (
     <div className="cd-welcome-hero">
@@ -201,90 +184,68 @@ function WelcomeHero({
         <div className="cd-welcome-hero-left">
           <div className="cd-welcome-badge">
             <Sparkles className="h-3.5 w-3.5" />
-            <span>Today&apos;s Training • Adaptive Engine</span>
+            <span>Today&apos;s Training • Multi-Pathway Personalization</span>
           </div>
+
           <h1 className="cd-welcome-heading">
             {greeting}, <span className="cd-welcome-name">{userName}</span>! 👋
           </h1>
+
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", margin: "10px 0 14px" }}>
+            {assignedPathways.map((p) => {
+              const badge = getPathwayBadge(p);
+              return (
+                <span
+                  key={p}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "5px",
+                    background: "rgba(255, 255, 255, 0.22)",
+                    backdropFilter: "blur(8px)",
+                    border: "1px solid rgba(255, 255, 255, 0.35)",
+                    padding: "4px 12px",
+                    borderRadius: "20px",
+                    fontSize: "12px",
+                    fontWeight: 800,
+                    color: "white",
+                  }}
+                >
+                  {badge.icon} {badge.label}
+                </span>
+              );
+            })}
+          </div>
+
           <p className="cd-welcome-subtitle">
             {recommended
-              ? `Recommended for you: ${recommended.name} calibrated at Level ${recommended.level}. Let's build your cognitive power!`
+              ? `Recommended for your goals: ${recommended.name} (${recommended.pathway.toUpperCase()} • Level ${recommended.difficulty}). Let's practice!`
               : stats.total_sessions > 0
-              ? "You're doing amazing! Let's keep building your cognitive power today."
-              : "Welcome to NeuroAdapt! Complete your assigned sessions to build cognitive strength."}
+              ? "You're making steady progress! Complete today's recommended activities to build your skills."
+              : "Welcome to NeuroAdapt! Start your personalized developmental exercises below."}
           </p>
-
-          {/* Dynamic Adaptive Level-Up Progress Gauge */}
-          {recommended && (
-            <div
-              style={{
-                background: "rgba(255, 255, 255, 0.16)",
-                backdropFilter: "blur(12px)",
-                border: "1px solid rgba(255, 255, 255, 0.28)",
-                borderRadius: "16px",
-                padding: "12px 18px",
-                marginTop: "14px",
-                marginBottom: "16px",
-                maxWidth: "520px",
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                  <span style={{ background: "rgba(255, 255, 255, 0.25)", padding: "3px 8px", borderRadius: "8px", fontSize: "11px", fontWeight: 800, color: "white" }}>
-                    ⚡ Level {recommended.level}
-                  </span>
-                  <span style={{ fontSize: "12px", color: "rgba(255, 255, 255, 0.9)", fontWeight: 700 }}>
-                    {recommended.level < 10 ? `➔ Next: Level ${nextLvl}` : "Master Tier"}
-                  </span>
-                </div>
-                <span style={{ fontSize: "12px", fontWeight: 800, color: "#FEF08A" }}>
-                  {recommended.level < 10 ? `${progPct}% close to Level ${nextLvl}` : "100% Mastered"}
-                </span>
-              </div>
-
-              {/* Glowing Progress Bar */}
-              <div style={{ height: "8px", background: "rgba(0, 0, 0, 0.25)", borderRadius: "10px", overflow: "hidden", position: "relative" }}>
-                <div
-                  style={{
-                    height: "100%",
-                    width: `${progPct}%`,
-                    background: "linear-gradient(90deg, #FDE047 0%, #34D399 100%)",
-                    borderRadius: "10px",
-                    boxShadow: "0 0 12px rgba(253, 224, 71, 0.6)",
-                    transition: "width 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)",
-                  }}
-                />
-              </div>
-
-              <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "6px" }}>
-                <TrendingUp className="h-3.5 w-3.5 text-amber-300 flex-shrink-0" />
-                <span style={{ fontSize: "11.5px", color: "rgba(255, 255, 255, 0.95)", fontWeight: 600 }}>
-                  {recommended.hint || (recommended.level < 10 ? `Score ≥80% on your next ${recommended.name} game to level up to Level ${nextLvl}!` : "You have reached the highest unlocked level!")}
-                </span>
-              </div>
-            </div>
-          )}
 
           <div className="cd-welcome-stats-row">
             <div className="cd-welcome-stat">
-              <Flame className="h-4.5 w-4.5 text-orange-500" />
+              <Flame className="h-4.5 w-4.5 text-orange-400" />
               <span className="cd-welcome-stat-value">{stats.streak_days}</span>
               <span className="cd-welcome-stat-label">day streak</span>
             </div>
             <div className="cd-welcome-stat-divider" />
             <div className="cd-welcome-stat">
-              <Star className="h-4.5 w-4.5 text-amber-500" />
+              <Star className="h-4.5 w-4.5 text-amber-300" />
               <span className="cd-welcome-stat-value">{stats.total_xp.toLocaleString()}</span>
               <span className="cd-welcome-stat-label">total XP</span>
             </div>
             <div className="cd-welcome-stat-divider" />
             <div className="cd-welcome-stat">
-              <Activity className="h-4.5 w-4.5 text-violet-300" />
+              <Activity className="h-4.5 w-4.5 text-violet-200" />
               <span className="cd-welcome-stat-value">{stats.total_sessions}</span>
               <span className="cd-welcome-stat-label">sessions</span>
             </div>
           </div>
         </div>
+
         <div className="cd-welcome-hero-right">
           <button onClick={onStartSession} className="cd-start-session-btn">
             <div className="cd-start-session-icon">
@@ -292,470 +253,14 @@ function WelcomeHero({
             </div>
             <div className="cd-start-session-text">
               <span className="cd-start-session-title">
-                {recommended ? `Play ${recommended.name}` : "Start Training"}
+                {recommended ? `Play ${recommended.name}` : "Start Activity"}
               </span>
               <span className="cd-start-session-sub">
-                {recommended ? `Level ${recommended.level} • Adaptive` : "Begin session"}
+                {recommended ? `${recommended.pathway.toUpperCase()} • Level ${recommended.difficulty}` : "Begin Session"}
               </span>
             </div>
-            <ChevronRight className="h-5 w-5 cd-start-session-arrow" />
           </button>
         </div>
-      </div>
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════════════════ */
-/*                      QUICK STATS BAR                                  */
-/* ═══════════════════════════════════════════════════════════════════════ */
-
-function QuickStatsBar({ stats }: { stats: DashboardData["stats"] }) {
-  const items = [
-    { label: "Sessions Completed", value: String(stats.total_sessions), icon: <Activity className="h-5 w-5" />, color: "#7C3AED" },
-    { label: "Avg. Accuracy", value: `${stats.avg_accuracy}%`, icon: <Target className="h-5 w-5" />, color: "#8B5CF6" },
-    { label: "Time Spent", value: `${stats.total_time_min} min`, icon: <Clock className="h-5 w-5" />, color: "#6D28D9" },
-    { label: "Exercises Done", value: String(stats.total_exercises_done), icon: <CheckCircle2 className="h-5 w-5" />, color: "#9333EA" },
-  ];
-
-  return (
-    <div className="cd-quick-stats">
-      {items.map((stat, i) => (
-        <div key={i} className="cd-quick-stat-card" style={{ animationDelay: `${i * 80}ms` }}>
-          <div className="cd-quick-stat-icon" style={{ background: `${stat.color}12`, color: stat.color }}>
-            {stat.icon}
-          </div>
-          <div className="cd-quick-stat-info">
-            <span className="cd-quick-stat-value">{stat.value}</span>
-            <span className="cd-quick-stat-label">{stat.label}</span>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════════════════ */
-/*                   ACTIVE CLINICIAN ASSIGNMENTS BANNER                 */
-/* ═══════════════════════════════════════════════════════════════════════ */
-
-function ActiveAssignmentsBanner({
-  assignments,
-  onPlayAssignment,
-}: {
-  assignments: ActiveAssignment[];
-  onPlayAssignment: (a: ActiveAssignment) => void;
-}) {
-  if (!assignments || assignments.length === 0) return null;
-
-  return (
-    <div className="cd-section" style={{ marginBottom: "28px" }}>
-      <div className="cd-section-header">
-        <div>
-          <h2 className="cd-section-title" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <ClipboardList className="h-5 w-5 text-violet-600" /> Prescribed by Your Clinician
-          </h2>
-          <p className="cd-section-subtitle">Active cognitive assignments assigned by your therapy team</p>
-        </div>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "16px" }}>
-        {assignments.map((a) => (
-          <div
-            key={a.id}
-            style={{
-              background: "linear-gradient(135deg, #FAF8FF 0%, #FFFFFF 100%)",
-              border: "1.5px solid #DDD6FE",
-              borderRadius: "20px",
-              padding: "22px",
-              display: "flex",
-              flexDirection: "column",
-              justifyContent: "space-between",
-              boxShadow: "0 8px 24px rgba(124, 58, 237, 0.08)",
-            }}
-          >
-            <div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
-                <span
-                  style={{
-                    background: "#7C3AED",
-                    color: "white",
-                    fontSize: "11px",
-                    fontWeight: 700,
-                    padding: "3px 10px",
-                    borderRadius: "6px",
-                    textTransform: "uppercase",
-                  }}
-                >
-                  {a.domain} • Level {a.difficulty}
-                </span>
-                <span style={{ fontSize: "11.5px", color: "#6B6580", fontWeight: 600 }}>
-                  👨‍⚕️ {a.clinician_name}
-                </span>
-              </div>
-              <h3 style={{ fontSize: "17px", fontWeight: 700, color: "#1A1035", margin: "0 0 6px" }}>
-                {a.exercise_name}
-              </h3>
-              <p style={{ fontSize: "12.5px", color: "#6B6580", margin: "0 0 16px", lineHeight: 1.4 }}>
-                {a.notes || "Complete this assigned retraining session to build cognitive endurance."}
-              </p>
-            </div>
-
-            <button
-              onClick={() => onPlayAssignment(a)}
-              className="cd-hero-btn"
-              style={{ padding: "10px 20px", fontSize: "13.5px", justifyContent: "center" }}
-            >
-              <Play className="h-4 w-4" fill="currentColor" /> Play Prescribed Exercise
-            </button>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function VoiceMemoryBanner({
-  onStartInterview,
-  onStartVoiceChallenge,
-}: {
-  onStartInterview: () => void;
-  onStartVoiceChallenge: () => void;
-}) {
-  return (
-    <div
-      className="cd-prescribed-banner"
-      style={{
-        background: "linear-gradient(135deg, #3B0764 0%, #6B21A8 45%, #7C3AED 100%)",
-        color: "white",
-        borderRadius: "24px",
-        padding: "26px 30px",
-        marginBottom: "28px",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        flexWrap: "wrap",
-        gap: "20px",
-        boxShadow: "0 14px 40px rgba(107, 33, 168, 0.32)",
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
-        <div
-          style={{
-            width: "60px",
-            height: "60px",
-            borderRadius: "20px",
-            background: "rgba(255, 255, 255, 0.16)",
-            backdropFilter: "blur(10px)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: "30px",
-            boxShadow: "0 4px 16px rgba(0, 0, 0, 0.15)",
-          }}
-        >
-          🎙️
-        </div>
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "4px" }}>
-            <span
-              style={{
-                fontSize: "11px",
-                fontWeight: 800,
-                textTransform: "uppercase",
-                padding: "3px 10px",
-                borderRadius: "12px",
-                background: "rgba(255, 255, 255, 0.22)",
-                letterSpacing: "0.5px",
-              }}
-            >
-              Adaptive AI Assessment
-            </span>
-            <span style={{ fontSize: "12.5px", opacity: 0.9 }}>60–90s Dynamic Multi-Domain</span>
-          </div>
-          <h3 style={{ fontSize: "21px", fontWeight: 800, margin: 0, color: "white" }}>
-            AI Voice Cognitive Interview
-          </h3>
-          <p style={{ fontSize: "13.5px", opacity: 0.92, margin: "3px 0 0", maxWidth: "540px" }}>
-            Adaptive spoken conversation testing Memory, Attention, and Reasoning. Questions dynamically adjust in real time based on your spoken answers!
-          </p>
-        </div>
-      </div>
-
-      <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-        <button
-          onClick={onStartInterview}
-          style={{
-            background: "white",
-            color: "#581C87",
-            border: "none",
-            padding: "13px 24px",
-            borderRadius: "14px",
-            fontWeight: 800,
-            fontSize: "14.5px",
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "8px",
-            cursor: "pointer",
-            boxShadow: "0 6px 20px rgba(0, 0, 0, 0.18)",
-          }}
-        >
-          <Sparkles className="h-4 w-4 text-purple-700" /> Start AI Interview
-        </button>
-
-        <button
-          onClick={onStartVoiceChallenge}
-          style={{
-            background: "rgba(255, 255, 255, 0.15)",
-            color: "white",
-            border: "1px solid rgba(255, 255, 255, 0.3)",
-            padding: "13px 20px",
-            borderRadius: "14px",
-            fontWeight: 700,
-            fontSize: "13.5px",
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "6px",
-            cursor: "pointer",
-            backdropFilter: "blur(6px)",
-          }}
-        >
-          <Mic className="h-4 w-4 text-purple-200" /> Word Recall
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════════════════ */
-/*                 COGNITIVE DOMAIN PROGRESS CARDS                       */
-/* ═══════════════════════════════════════════════════════════════════════ */
-
-function CognitiveDomainCards({
-  domainStats,
-  onPlayDomain,
-}: {
-  domainStats: DashboardData["domain_stats"];
-  onPlayDomain?: (domain: string) => void;
-}) {
-  return (
-    <div className="cd-section">
-      <div className="cd-section-header">
-        <div>
-          <h2 className="cd-section-title">Cognitive Domains</h2>
-          <p className="cd-section-subtitle">Your progress across all training areas • Tap any domain to train at unlocked level</p>
-        </div>
-      </div>
-      <div className="cd-domain-grid">
-        {Object.entries(DOMAIN_CONFIG).map(([key, config], i) => {
-          const stats = domainStats[key] || {
-            sessions: 0,
-            accuracy: 0,
-            avg_score: 0,
-            level: 1,
-            progress: 0,
-            max_difficulty: 1,
-          };
-          const displayLvl = stats.level || stats.max_difficulty || 1;
-          return (
-            <div
-              key={key}
-              className="cd-domain-card"
-              style={{ animationDelay: `${i * 90}ms`, cursor: onPlayDomain ? "pointer" : "default" }}
-              onClick={() => onPlayDomain && onPlayDomain(key)}
-              title={`Train in ${config.label} at Level ${displayLvl}`}
-            >
-              <div className="cd-domain-card-top">
-                <div className="cd-domain-icon-wrap" style={{ background: `${config.color}15`, color: config.color }}>
-                  {config.icon}
-                </div>
-                <span className="cd-domain-level-badge">Lvl {displayLvl}</span>
-              </div>
-              <h3 className="cd-domain-name">{config.label}</h3>
-              <div className="cd-domain-ring-section">
-                <div className="cd-domain-ring-wrapper">
-                  <ProgressRing progress={stats.progress} size={72} strokeWidth={5.5} color={config.color} />
-                  <span className="cd-domain-ring-pct">{stats.progress}%</span>
-                </div>
-                <div className="cd-domain-stats-mini">
-                  <div className="cd-domain-stat-mini-row">
-                    <span>Sessions</span>
-                    <strong>{stats.sessions}</strong>
-                  </div>
-                  <div className="cd-domain-stat-mini-row">
-                    <span>Accuracy</span>
-                    <strong>{stats.accuracy}%</strong>
-                  </div>
-                  <div className="cd-domain-stat-mini-row">
-                    <span>Unlocked</span>
-                    <strong style={{ color: config.color }}>Level {displayLvl}</strong>
-                  </div>
-                </div>
-              </div>
-
-              {/* Adaptive Next-Level Progress Bar & Hint */}
-              <div style={{ marginTop: "14px", paddingTop: "10px", borderTop: "1px solid rgba(0,0,0,0.06)" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", fontWeight: 700, marginBottom: "5px" }}>
-                  <span style={{ color: "#6B6580" }}>
-                    {displayLvl < 10 ? `➔ Next: Level ${stats.next_level || displayLvl + 1}` : "🌟 Master Tier"}
-                  </span>
-                  <span style={{ color: config.color, fontWeight: 800 }}>
-                    {displayLvl < 10 ? `${stats.next_level_progress || 0}% close` : "100%"}
-                  </span>
-                </div>
-                <div style={{ height: "6px", background: "#F3F0FA", borderRadius: "10px", overflow: "hidden" }}>
-                  <div
-                    style={{
-                      height: "100%",
-                      width: `${stats.next_level_progress || 0}%`,
-                      background: config.color,
-                      borderRadius: "10px",
-                      transition: "width 0.4s ease",
-                    }}
-                  />
-                </div>
-                {stats.next_level_hint && displayLvl < 10 && (
-                  <p style={{ fontSize: "10.5px", color: "#6B6580", margin: "5px 0 0", lineHeight: 1.3, fontWeight: 500 }}>
-                    {stats.next_level_hint}
-                  </p>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════════════════ */
-/*                 EXERCISES LIST                                        */
-/* ═══════════════════════════════════════════════════════════════════════ */
-
-function ExercisesList({
-  exercises,
-  onPlayExercise,
-}: {
-  exercises: ExerciseData[];
-  onPlayExercise: (ex: ExerciseData) => void;
-}) {
-  return (
-    <div className="cd-section">
-      <div className="cd-section-header">
-        <div>
-          <h2 className="cd-section-title">Cognitive Exercises</h2>
-          <p className="cd-section-subtitle">Playable retraining games</p>
-        </div>
-      </div>
-      <div className="cd-exercises-list">
-        {exercises.map((ex, i) => {
-          const domConf = DOMAIN_CONFIG[ex.domain] || DOMAIN_CONFIG.attention;
-          return (
-            <div key={ex.id} className="cd-exercise-card" style={{ animationDelay: `${i * 70}ms` }}>
-              <div className="cd-exercise-icon" style={{ background: `${domConf.color}15`, color: domConf.color }}>
-                {domConf.icon}
-              </div>
-              <div className="cd-exercise-body">
-                <div className="cd-exercise-meta">
-                  <span className="cd-exercise-domain-pill" style={{ background: `${domConf.color}10`, color: domConf.color }}>
-                    {domConf.label}
-                  </span>
-                  <span className="cd-exercise-diff-pill">Level {ex.difficulty}</span>
-                </div>
-                <h3 className="cd-exercise-name">{ex.name}</h3>
-              </div>
-              <button onClick={() => onPlayExercise(ex)} className="cd-exercise-play-btn">
-                <Play className="h-4 w-4" fill="currentColor" /> Play
-              </button>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════════════════ */
-/*                 RECENT SESSIONS TABLE                                 */
-/* ═══════════════════════════════════════════════════════════════════════ */
-
-function RecentSessions({ sessions }: { sessions: DashboardData["recent_sessions"] }) {
-  if (!sessions || sessions.length === 0) {
-    return (
-      <div className="cd-section">
-        <div className="cd-section-header">
-          <div>
-            <h2 className="cd-section-title">Recent Sessions</h2>
-            <p className="cd-section-subtitle">Your latest training activity</p>
-          </div>
-        </div>
-        <div className="cd-empty-state">
-          <span className="cd-empty-emoji">🎮</span>
-          <p>No sessions yet. Play an exercise above to record your performance!</p>
-        </div>
-      </div>
-    );
-  }
-
-  const formatDate = (dateStr: string | null) => {
-    if (!dateStr) return "—";
-    const d = new Date(dateStr);
-    return d.toLocaleDateString("en-IN", { month: "short", day: "numeric" });
-  };
-
-  return (
-    <div className="cd-section">
-      <div className="cd-section-header">
-        <div>
-          <h2 className="cd-section-title">Recent Sessions</h2>
-          <p className="cd-section-subtitle">Your latest telemetry sent to clinician</p>
-        </div>
-      </div>
-      <div className="cd-sessions-table-wrap custom-scrollbar">
-        <table className="cd-sessions-table">
-          <thead>
-            <tr>
-              <th>Exercise</th>
-              <th>Domain</th>
-              <th>Score</th>
-              <th>Accuracy</th>
-              <th>Time</th>
-              <th>Date</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sessions.map((s, i) => {
-              const domConf = DOMAIN_CONFIG[s.domain] || DOMAIN_CONFIG.attention;
-              return (
-                <tr key={s.id} className="cd-session-row" style={{ animationDelay: `${i * 60}ms` }}>
-                  <td className="cd-session-exercise">{s.exercise}</td>
-                  <td>
-                    <span className="cd-session-domain-badge" style={{ background: `${domConf.color}12`, color: domConf.color }}>
-                      {domConf.label}
-                    </span>
-                  </td>
-                  <td className="cd-session-score">{s.score.toLocaleString()}</td>
-                  <td>
-                    <div className="cd-session-accuracy-bar-wrap">
-                      <div className="cd-session-accuracy-bar">
-                        <div
-                          className="cd-session-accuracy-fill"
-                          style={{
-                            width: `${s.accuracy}%`,
-                            background: s.accuracy >= 80 ? "#059669" : "#7C3AED",
-                          }}
-                        />
-                      </div>
-                      <span className="cd-session-accuracy-text">{s.accuracy}%</span>
-                    </div>
-                  </td>
-                  <td className="cd-session-time">{s.response_time}s</td>
-                  <td className="cd-session-date">{formatDate(s.date)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
       </div>
     </div>
   );
@@ -766,7 +271,7 @@ function RecentSessions({ sessions }: { sessions: DashboardData["recent_sessions
 /* ═══════════════════════════════════════════════════════════════════════ */
 
 export default function ChildDashboard() {
-  const { user, apiUrl } = useChildContext();
+  const { user, apiUrl, activePathwayFilter, setActivePathwayFilter } = useChildContext();
   const [dashData, setDashData] = useState<DashboardData | null>(null);
   const [exercises, setExercises] = useState<ExerciseData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -785,7 +290,7 @@ export default function ChildDashboard() {
       }
       setExercises(Array.isArray(exRes) ? exRes : []);
     } catch {
-      // Keep existing data or empty state
+      // Graceful fallback
     } finally {
       setLoading(false);
     }
@@ -795,222 +300,401 @@ export default function ChildDashboard() {
     fetchData();
   }, [user, apiUrl]);
 
-  // Find the recommended adaptive exercise for Today's Training
-  const getRecommendedExercise = () => {
-    // 1. If tied to an active assignment, feature it
+  const assignedPathways = dashData?.assigned_pathways || user?.assigned_pathways || ["adhd"];
+
+  const handleStartPrimarySession = () => {
     if (dashData?.active_assignments && dashData.active_assignments.length > 0) {
       const a = dashData.active_assignments[0];
-      const s = dashData.domain_stats[a.domain];
-      return {
+      setActiveGameConfig({
         exerciseId: a.exercise_id,
-        name: a.exercise_name,
+        exerciseName: a.exercise_name,
+        pathway: a.pathway || "adhd",
         domain: a.domain,
-        level: a.difficulty,
-        nextLevel: s?.next_level || Math.min(10, a.difficulty + 1),
-        progressToNext: s?.next_level_progress !== undefined ? s.next_level_progress : 65,
-        hint: s?.next_level_hint,
+        difficulty: a.difficulty,
         assignmentId: a.id,
         notes: a.notes,
-      };
+      });
+      return;
     }
 
-    // 2. Feature the domain/exercise the child most recently played so progress immediately updates
-    if (dashData?.recent_sessions && dashData.recent_sessions.length > 0 && exercises.length > 0) {
-      const lastDomain = dashData.recent_sessions[0].domain;
-      const matchingEx = exercises.find((e) => e.domain === lastDomain) || exercises[0];
-      if (matchingEx && dashData.domain_stats[lastDomain]) {
-        const s = dashData.domain_stats[lastDomain];
-        const lvl = s?.level || s?.max_difficulty || matchingEx.difficulty || 1;
-        return {
-          exerciseId: matchingEx.id,
-          name: matchingEx.name,
-          domain: lastDomain,
-          level: lvl,
-          nextLevel: s?.next_level || Math.min(10, lvl + 1),
-          progressToNext: s?.next_level_progress !== undefined ? s.next_level_progress : 60,
-          hint: s?.next_level_hint,
-        };
-      }
-    }
-
-    // 3. Fallback to active cognitive domain
-    if (exercises.length > 0 && dashData?.domain_stats) {
-      const domains = ["memory", "reasoning", "problem_solving", "attention"];
-      for (const dom of domains) {
-        const matchingEx = exercises.find((e) => e.domain === dom);
-        if (matchingEx && dashData.domain_stats[dom]) {
-          const s = dashData.domain_stats[dom];
-          const lvl = s?.level || s?.max_difficulty || matchingEx.difficulty || 1;
-          return {
-            exerciseId: matchingEx.id,
-            name: matchingEx.name,
-            domain: dom,
-            level: lvl,
-            nextLevel: s?.next_level || Math.min(10, lvl + 1),
-            progressToNext: s?.next_level_progress !== undefined ? s.next_level_progress : 60,
-            hint: s?.next_level_hint,
-          };
-        }
-      }
-    }
-    const defaultEx = exercises[0] || { id: 1, name: "Focus Matrix", domain: "attention", difficulty: 1 };
-    const defS = dashData?.domain_stats?.[defaultEx.domain];
-    return {
-      exerciseId: defaultEx.id,
-      name: defaultEx.name,
-      domain: defaultEx.domain,
-      level: defS?.level || defaultEx.difficulty || 1,
-      nextLevel: defS?.next_level || 2,
-      progressToNext: defS?.next_level_progress !== undefined ? defS.next_level_progress : 50,
-      hint: defS?.next_level_hint,
-    };
-  };
-
-  const recommendedExercise = dashData ? getRecommendedExercise() : null;
-
-  const handleStartSession = () => {
-    if (recommendedExercise) {
+    if (dashData?.recommended_exercises && dashData.recommended_exercises.length > 0) {
+      const r = dashData.recommended_exercises[0];
       setActiveGameConfig({
-        exerciseId: recommendedExercise.exerciseId,
-        exerciseName: recommendedExercise.name,
-        domain: recommendedExercise.domain,
-        difficulty: recommendedExercise.level,
-        assignmentId: (recommendedExercise as any).assignmentId || null,
-        notes: (recommendedExercise as any).notes,
+        exerciseId: r.exercise_id,
+        exerciseName: r.name,
+        pathway: r.pathway,
+        domain: r.domain,
+        difficulty: r.difficulty,
+      });
+      return;
+    }
+
+    if (exercises.length > 0) {
+      const firstEx = exercises[0];
+      setActiveGameConfig({
+        exerciseId: firstEx.id,
+        exerciseName: firstEx.name,
+        pathway: firstEx.pathway,
+        domain: firstEx.domain,
+        difficulty: firstEx.difficulty,
       });
     }
   };
 
-  const handlePlayAssignment = (a: ActiveAssignment) => {
+  const handlePlayExercise = (exId: number, name: string, pathway: string, domain: string, diff: number, notes?: string, assignId?: number) => {
     setActiveGameConfig({
-      exerciseId: a.exercise_id,
-      exerciseName: a.exercise_name,
-      domain: a.domain,
-      difficulty: a.difficulty,
-      assignmentId: a.id,
-      notes: a.notes,
+      exerciseId: exId,
+      exerciseName: name,
+      pathway,
+      domain,
+      difficulty: diff,
+      notes,
+      assignmentId: assignId || null,
     });
   };
 
-  const handlePlayDomain = (domain: string) => {
-    const matchingEx = exercises.find((e) => e.domain === domain) || exercises[0];
-    if (matchingEx) {
-      const lvl = dashData?.domain_stats?.[domain]?.level || matchingEx.difficulty || 1;
-      setActiveGameConfig({
-        exerciseId: matchingEx.id,
-        exerciseName: matchingEx.name,
-        domain: domain,
-        difficulty: lvl,
-      });
-    }
-  };
-
-  const handlePlayExercise = (ex: ExerciseData) => {
-    const liveDiff = dashData?.domain_stats?.[ex.domain]?.level || ex.difficulty || 1;
-    setActiveGameConfig({
-      exerciseId: ex.id,
-      exerciseName: ex.name,
-      domain: ex.domain,
-      difficulty: liveDiff,
-    });
-  };
-
-  const [isInterviewOpen, setIsInterviewOpen] = useState(false);
-
-  const handleStartInterview = () => {
-    setIsInterviewOpen(true);
-  };
-
-  const handleStartVoiceChallenge = () => {
-    const memLvl = dashData?.domain_stats?.memory?.level || dashData?.domain_stats?.memory?.max_difficulty || 3;
-    setActiveGameConfig({
-      exerciseId: 7,
-      exerciseName: "Voice Memory Recall",
-      domain: "memory",
-      difficulty: memLvl,
-    });
-  };
-
-  const handleGameComplete = async () => {
-    setActiveGameConfig(null);
-    await fetchData();
-  };
-
-  if (loading || !dashData) {
+  if (loading) {
     return (
       <div className="cd-page-loading">
         <div className="cd-loading-spinner" />
-        <span>Loading dashboard...</span>
+        <span>Loading your personalized dashboard...</span>
       </div>
     );
   }
 
-  const displayName = dashData.user.name || user?.name || "User";
-  const childId = dashData.user.id;
+  const displayName = user?.name || "Learner";
+  const stats = dashData?.stats || {
+    total_sessions: 0,
+    today_sessions: 0,
+    total_exercises_done: 0,
+    avg_accuracy: 0,
+    total_xp: 0,
+    total_time_min: 0,
+    streak_days: 0,
+  };
+
+  const recommendedOne = dashData?.recommended_exercises?.[0] || null;
+
+  // Filter recommendations or activities by selected pathway tab
+  const displayedRecommendations = (dashData?.recommended_exercises || []).filter((rec) => {
+    if (activePathwayFilter === "all") return true;
+    return rec.pathway.toLowerCase() === activePathwayFilter.toLowerCase();
+  });
 
   return (
-    <div className="cd-dashboard-page">
+    <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+      {/* 1. Welcome Hero */}
       <WelcomeHero
         userName={displayName}
-        stats={dashData.stats}
-        recommended={recommendedExercise}
-        onStartSession={handleStartSession}
+        stats={stats}
+        assignedPathways={assignedPathways}
+        recommended={recommendedOne}
+        onStartSession={handleStartPrimarySession}
       />
 
-      <QuickStatsBar stats={dashData.stats} />
+      {/* 2. Pathway Switcher Tabs */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
+        <div>
+          <h2 style={{ fontSize: "19px", fontWeight: 800, color: "#1A1035", margin: 0 }}>
+            Your Intervention Pathways
+          </h2>
+          <span style={{ fontSize: "12.5px", color: "#7C3AED", fontWeight: 600 }}>
+            Assigned: {assignedPathways.map((p) => p.toUpperCase()).join(" + ")}
+          </span>
+        </div>
 
-      {/* Featured AI Voice Cognitive Interview & Memory Banner */}
-      <VoiceMemoryBanner
-        onStartInterview={handleStartInterview}
-        onStartVoiceChallenge={handleStartVoiceChallenge}
-      />
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          <button
+            onClick={() => setActivePathwayFilter("all")}
+            className={`cd-filter-chip ${activePathwayFilter === "all" ? "cd-filter-chip--active" : ""}`}
+          >
+            All Pathways (Unified)
+          </button>
+          {assignedPathways.map((p) => {
+            const badge = getPathwayBadge(p);
+            return (
+              <button
+                key={p}
+                onClick={() => setActivePathwayFilter(p)}
+                className={`cd-filter-chip ${activePathwayFilter === p ? "cd-filter-chip--active" : ""}`}
+              >
+                {badge.icon} {badge.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
-      {/* Active Clinician Assignments Banner */}
-      <ActiveAssignmentsBanner
-        assignments={dashData.active_assignments || []}
-        onPlayAssignment={handlePlayAssignment}
-      />
+      {/* 3. Active Clinician Assignments (if any) */}
+      {dashData?.active_assignments && dashData.active_assignments.length > 0 && (
+        <div style={{ background: "#F5F3FF", border: "1px solid #DDD6FE", borderRadius: "18px", padding: "18px 22px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
+            <ClipboardList className="h-5 w-5 text-violet-700" />
+            <h3 style={{ fontSize: "16px", fontWeight: 800, color: "#4C1D95", margin: 0 }}>
+              Active Clinician Prescriptions ({dashData.active_assignments.length})
+            </h3>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "12px" }}>
+            {dashData.active_assignments.map((a) => {
+              const badge = getPathwayBadge(a.pathway || "adhd");
+              return (
+                <div
+                  key={a.id}
+                  style={{
+                    background: "white",
+                    border: "1px solid #E5DEFF",
+                    borderRadius: "14px",
+                    padding: "14px",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                >
+                  <div>
+                    <div style={{ display: "flex", gap: "6px", alignItems: "center", marginBottom: "4px" }}>
+                      <span style={{ fontSize: "10.5px", fontWeight: 700, color: badge.color, background: badge.bg, padding: "2px 6px", borderRadius: "4px" }}>
+                        {badge.short}
+                      </span>
+                      <span style={{ fontSize: "11px", fontWeight: 700, color: "#6D28D9" }}>Level {a.difficulty}</span>
+                    </div>
+                    <div style={{ fontSize: "14px", fontWeight: 800, color: "#1A1035" }}>{a.exercise_name}</div>
+                    <div style={{ fontSize: "11.5px", color: "#6B6580" }}>{a.notes || `Prescribed by ${a.clinician_name}`}</div>
+                  </div>
+                  <button
+                    onClick={() => handlePlayExercise(a.exercise_id, a.exercise_name, a.pathway || "adhd", a.domain, a.difficulty, a.notes, a.id)}
+                    style={{
+                      background: "#7C3AED",
+                      color: "white",
+                      border: "none",
+                      borderRadius: "10px",
+                      padding: "8px 14px",
+                      fontSize: "12.5px",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "4px",
+                    }}
+                  >
+                    <Play className="h-3.5 w-3.5" fill="currentColor" /> Play
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
-      <CognitiveDomainCards
-        domainStats={dashData.domain_stats}
-        onPlayDomain={handlePlayDomain}
-      />
+      {/* 4. Today's Recommended Activities */}
+      <div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+          <div>
+            <h3 style={{ fontSize: "18px", fontWeight: 800, color: "#1A1035", margin: 0 }}>
+              Recommended Activities Today
+            </h3>
+            <span style={{ fontSize: "12.5px", color: "#7C3AED", fontWeight: 600 }}>
+              Tailored to your progress across assigned pathways
+            </span>
+          </div>
+          <Link href="/child/exercises" style={{ fontSize: "13px", fontWeight: 700, color: "#7C3AED", display: "flex", alignItems: "center", gap: "4px" }}>
+            View All Exercises <ChevronRight className="h-4 w-4" />
+          </Link>
+        </div>
 
-      <ExercisesList exercises={exercises} onPlayExercise={handlePlayExercise} />
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(270px, 1fr))", gap: "14px" }}>
+          {(displayedRecommendations.length > 0 ? displayedRecommendations : exercises.slice(0, 3)).map((item: any) => {
+            const badge = getPathwayBadge(item.pathway || "adhd");
+            return (
+              <div
+                key={item.exercise_id || item.id}
+                style={{
+                  background: "white",
+                  border: "1px solid #EDE9FE",
+                  borderRadius: "18px",
+                  padding: "18px",
+                  display: "flex",
+                  flexDirection: "column",
+                  justifyContent: "space-between",
+                  boxShadow: "0 4px 15px rgba(124, 58, 237, 0.04)",
+                }}
+              >
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "4px",
+                        background: badge.bg,
+                        color: badge.color,
+                        fontSize: "11px",
+                        fontWeight: 800,
+                        padding: "3px 8px",
+                        borderRadius: "6px",
+                      }}
+                    >
+                      {badge.icon} {badge.label}
+                    </span>
+                    <span style={{ fontSize: "11px", fontWeight: 700, color: "#7C3AED", background: "#FAF5FF", padding: "3px 8px", borderRadius: "6px" }}>
+                      Level {item.difficulty || 1}
+                    </span>
+                  </div>
+                  <h4 style={{ fontSize: "16px", fontWeight: 800, color: "#1A1035", margin: "0 0 6px" }}>
+                    {item.name}
+                  </h4>
+                  <p style={{ fontSize: "12.5px", color: "#6B6580", margin: "0 0 12px", lineHeight: 1.4 }}>
+                    {item.description || item.reason || `Targeted practice for ${item.domain}`}
+                  </p>
+                </div>
 
-      <RecentSessions sessions={dashData.recent_sessions} />
+                <button
+                  onClick={() =>
+                    handlePlayExercise(
+                      item.exercise_id || item.id,
+                      item.name,
+                      item.pathway || "adhd",
+                      item.domain,
+                      item.difficulty || 1,
+                      item.instructions
+                    )
+                  }
+                  style={{
+                    background: "linear-gradient(135deg, #7C3AED, #9333EA)",
+                    color: "white",
+                    border: "none",
+                    borderRadius: "12px",
+                    padding: "10px 16px",
+                    fontSize: "13px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "6px",
+                    boxShadow: "0 4px 12px rgba(124, 58, 237, 0.18)",
+                  }}
+                >
+                  <Play className="h-4 w-4" fill="currentColor" /> Start Activity
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
 
-      {/* Interactive In-App Cognitive Exercise Game Modal */}
-      {activeGameConfig && (
+      {/* 5. Pathway Skills Progress Cards */}
+      <div>
+        <h3 style={{ fontSize: "18px", fontWeight: 800, color: "#1A1035", marginBottom: "12px" }}>
+          Skills Progress Breakdown
+        </h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "12px" }}>
+          {Object.entries(dashData?.domain_stats || {})
+            .filter(([_, d]) => activePathwayFilter === "all" || d.pathway.toLowerCase() === activePathwayFilter.toLowerCase())
+            .slice(0, 8)
+            .map(([key, d]) => {
+              const badge = getPathwayBadge(d.pathway);
+              return (
+                <div
+                  key={key}
+                  style={{
+                    background: "white",
+                    border: "1px solid #EDE9FE",
+                    borderRadius: "16px",
+                    padding: "16px",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                    <span style={{ fontSize: "11px", fontWeight: 700, color: badge.color }}>{badge.short}</span>
+                    <span style={{ fontSize: "11px", fontWeight: 700, color: "#7C3AED" }}>Lvl {d.level}</span>
+                  </div>
+                  <h5 style={{ fontSize: "14px", fontWeight: 800, color: "#1A1035", margin: "0 0 6px" }}>
+                    {d.label}
+                  </h5>
+                  <div style={{ height: "6px", background: "#F3E8FF", borderRadius: "10px", overflow: "hidden", marginBottom: "6px" }}>
+                    <div
+                      style={{
+                        height: "100%",
+                        width: `${Math.min(100, Math.max(8, d.progress))}%`,
+                        background: badge.color,
+                        borderRadius: "10px",
+                      }}
+                    />
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11.5px", color: "#6B6580" }}>
+                    <span>{d.sessions} sessions</span>
+                    <span style={{ fontWeight: 700, color: d.accuracy >= 80 ? "#059669" : "#6D28D9" }}>{d.accuracy}% acc</span>
+                  </div>
+                </div>
+              );
+            })}
+        </div>
+      </div>
+
+      {/* 6. Recent Sessions Feed */}
+      <div>
+        <h3 style={{ fontSize: "18px", fontWeight: 800, color: "#1A1035", marginBottom: "12px" }}>
+          Recent Activity History
+        </h3>
+        {dashData?.recent_sessions && dashData.recent_sessions.length > 0 ? (
+          <div style={{ background: "white", border: "1px solid #EDE9FE", borderRadius: "18px", overflow: "hidden" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+              <thead>
+                <tr style={{ background: "#FAF7FF", borderBottom: "1px solid #EDE9FE", textAlign: "left", color: "#5B21B6", fontWeight: 700 }}>
+                  <th style={{ padding: "12px 16px" }}>Activity</th>
+                  <th style={{ padding: "12px 16px" }}>Pathway</th>
+                  <th style={{ padding: "12px 16px" }}>Level</th>
+                  <th style={{ padding: "12px 16px" }}>Accuracy</th>
+                  <th style={{ padding: "12px 16px" }}>XP</th>
+                  <th style={{ padding: "12px 16px" }}>Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dashData.recent_sessions.map((s) => {
+                  const badge = getPathwayBadge(s.pathway);
+                  return (
+                    <tr key={s.id} style={{ borderBottom: "1px solid #F5F3FF" }}>
+                      <td style={{ padding: "12px 16px", fontWeight: 700, color: "#1A1035" }}>{s.exercise}</td>
+                      <td style={{ padding: "12px 16px" }}>
+                        <span style={{ fontSize: "11px", fontWeight: 700, color: badge.color, background: badge.bg, padding: "2px 6px", borderRadius: "4px" }}>
+                          {badge.short}
+                        </span>
+                      </td>
+                      <td style={{ padding: "12px 16px", color: "#6B6580" }}>Level {s.difficulty}</td>
+                      <td style={{ padding: "12px 16px", fontWeight: 700, color: s.accuracy >= 80 ? "#059669" : "#D97706" }}>
+                        {s.accuracy}%
+                      </td>
+                      <td style={{ padding: "12px 16px", fontWeight: 700, color: "#7C3AED" }}>+{s.score}</td>
+                      <td style={{ padding: "12px 16px", color: "#9CA3AF", fontSize: "12px" }}>
+                        {s.date ? new Date(s.date).toLocaleDateString() : "Today"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div style={{ background: "white", padding: "24px", borderRadius: "16px", textAlign: "center", color: "#6B6580", border: "1px solid #EDE9FE" }}>
+            No completed sessions yet. Start your first activity above!
+          </div>
+        )}
+      </div>
+
+      {/* Active Game Modal */}
+      {activeGameConfig && user && (
         <InteractiveExerciseGame
           config={activeGameConfig}
-          childId={childId}
+          childId={user.id}
           apiUrl={apiUrl}
           onClose={() => {
             setActiveGameConfig(null);
             fetchData();
           }}
-          onComplete={handleGameComplete}
-        />
-      )}
-
-      {/* AI Voice Cognitive Interview Modal */}
-      {isInterviewOpen && (
-        <VoiceInterviewModal
-          childId={childId}
-          childName={displayName}
-          apiUrl={apiUrl}
-          onClose={() => setIsInterviewOpen(false)}
           onComplete={() => {
-            setIsInterviewOpen(false);
             fetchData();
           }}
         />
       )}
-
-      <footer className="cd-footer">
-        <span>NeuroAdapt © 2026 — AI-assisted cognitive rehabilitation</span>
-      </footer>
     </div>
   );
 }

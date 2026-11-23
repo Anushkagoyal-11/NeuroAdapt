@@ -26,8 +26,12 @@ import {
   FileText,
   RotateCcw,
   RefreshCw,
+  Sliders,
+  Layers,
+  BookOpen,
+  MessageSquare,
 } from "lucide-react";
-import { useClinicianContext } from "../../layout";
+import { useClinicianContext } from "../../ClinicianContext";
 import VoiceInterviewSummaryCard, { VoiceInterviewRecord } from "../../components/VoiceInterviewSummaryCard";
 import TelegramParentDispatcher from "../../components/TelegramParentDispatcher";
 
@@ -40,6 +44,7 @@ interface ChildDetailResponse {
     clinician_id: number | null;
     condition: string;
     baseline_score: number;
+    assigned_pathways?: string[];
     created_at: string | null;
   };
   stats: {
@@ -58,6 +63,7 @@ interface ChildDetailResponse {
   cached_ai_insights?: AIInsights | null;
   therapy_plan: {
     id: number;
+    target_pathways?: string[];
     target_domains: string[];
     min_difficulty: number;
     max_difficulty: number;
@@ -68,6 +74,7 @@ interface ChildDetailResponse {
     session_id: number;
     exercise_name: string;
     domain: string;
+    pathway?: string;
     score: number;
     accuracy: number;
     response_time_sec: number;
@@ -95,6 +102,7 @@ interface ExerciseOption {
   id: number;
   name: string;
   domain: string;
+  pathway?: string;
   difficulty: number;
 }
 
@@ -103,6 +111,7 @@ interface AssignmentItem {
   exercise_id: number;
   exercise_name: string;
   domain: string;
+  pathway?: string;
   difficulty: number;
   status: "pending" | "completed";
   notes: string;
@@ -112,9 +121,21 @@ interface AssignmentItem {
 
 const DOMAIN_CONFIG: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
   attention: { label: "Attention", color: "#7C3AED", icon: <Target className="h-5 w-5" strokeWidth={1.8} /> },
+  working_memory: { label: "Working Memory", color: "#8B5CF6", icon: <Brain className="h-5 w-5" strokeWidth={1.8} /> },
+  sequencing: { label: "Sequencing", color: "#6D28D9", icon: <Lightbulb className="h-5 w-5" strokeWidth={1.8} /> },
+  letter_recognition: { label: "Letter Recognition", color: "#2563EB", icon: <BookOpen className="h-5 w-5" strokeWidth={1.8} /> },
+  vocabulary: { label: "Vocabulary", color: "#059669", icon: <MessageSquare className="h-5 w-5" strokeWidth={1.8} /> },
+  sentence_construction: { label: "Sentence Building", color: "#0D9488", icon: <Puzzle className="h-5 w-5" strokeWidth={1.8} /> },
+  speech_sound: { label: "Speech Sound", color: "#10B981", icon: <Activity className="h-5 w-5" strokeWidth={1.8} /> },
   memory: { label: "Memory", color: "#8B5CF6", icon: <Brain className="h-5 w-5" strokeWidth={1.8} /> },
   reasoning: { label: "Reasoning", color: "#6D28D9", icon: <Lightbulb className="h-5 w-5" strokeWidth={1.8} /> },
   problem_solving: { label: "Problem Solving", color: "#9333EA", icon: <Puzzle className="h-5 w-5" strokeWidth={1.8} /> },
+};
+
+const PATHWAY_CONFIG: Record<string, { label: string; color: string; bg: string; border: string }> = {
+  adhd: { label: "ADHD", color: "#7C3AED", bg: "#F5F0FF", border: "#DDD6FE" },
+  dyslexia: { label: "Dyslexia", color: "#2563EB", bg: "#EFF6FF", border: "#BFDBFE" },
+  speech: { label: "Speech & Lang", color: "#059669", bg: "#ECFDF5", border: "#A7F3D0" },
 };
 
 export default function ChildDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -130,9 +151,15 @@ export default function ChildDetailPage({ params }: { params: Promise<{ id: stri
   const [loading, setLoading] = useState(true);
   const [aiLoading, setAiLoading] = useState(false);
 
+  // Edit Pathways Modal
+  const [isEditPathwaysOpen, setIsEditPathwaysOpen] = useState(false);
+  const [selectedPathways, setSelectedPathways] = useState<string[]>(["adhd"]);
+  const [updatingPathways, setUpdatingPathways] = useState(false);
+
   // Edit Plan Modal
   const [isPlanModalOpen, setIsPlanModalOpen] = useState(false);
-  const [planDomains, setPlanDomains] = useState<string[]>(["attention", "memory", "reasoning"]);
+  const [planPathways, setPlanPathways] = useState<string[]>(["adhd"]);
+  const [planDomains, setPlanDomains] = useState<string[]>(["attention", "working_memory", "sequencing"]);
   const [minDiff, setMinDiff] = useState(1);
   const [maxDiff, setMaxDiff] = useState(5);
   const [notes, setNotes] = useState("");
@@ -141,6 +168,7 @@ export default function ChildDetailPage({ params }: { params: Promise<{ id: stri
   // Assign Exercise Modal
   const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
   const [selectedExId, setSelectedExId] = useState<number | null>(null);
+  const [assignFilterPathway, setAssignFilterPathway] = useState<string>("all");
   const [assignDiff, setAssignDiff] = useState(1);
   const [assignNotes, setAssignNotes] = useState("");
   const [assigning, setAssigning] = useState(false);
@@ -156,11 +184,15 @@ export default function ChildDetailPage({ params }: { params: Promise<{ id: stri
 
       if (childRes) {
         setData(childRes);
+        if (childRes.child?.assigned_pathways) {
+          setSelectedPathways(childRes.child.assigned_pathways);
+        }
         if (childRes.cached_ai_insights) {
           setAiInsights(childRes.cached_ai_insights);
         }
         if (childRes.therapy_plan) {
-          setPlanDomains(childRes.therapy_plan.target_domains || ["attention", "memory", "reasoning"]);
+          setPlanPathways(childRes.therapy_plan.target_pathways || childRes.child?.assigned_pathways || ["adhd"]);
+          setPlanDomains(childRes.therapy_plan.target_domains || ["attention", "working_memory", "sequencing"]);
           setMinDiff(childRes.therapy_plan.min_difficulty || 1);
           setMaxDiff(childRes.therapy_plan.max_difficulty || 5);
           setNotes(childRes.therapy_plan.schedule_notes || "");
@@ -203,6 +235,57 @@ export default function ChildDetailPage({ params }: { params: Promise<{ id: stri
     }
   };
 
+  const togglePathway = (pw: string) => {
+    if (selectedPathways.includes(pw)) {
+      if (selectedPathways.length > 1) {
+        setSelectedPathways(selectedPathways.filter((p) => p !== pw));
+      }
+    } else {
+      setSelectedPathways([...selectedPathways, pw]);
+    }
+  };
+
+  const handleSavePathways = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (selectedPathways.length === 0) return;
+    setUpdatingPathways(true);
+    try {
+      const res = await fetch(`${apiUrl}/api/child/${childId}/pathways`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assigned_pathways: selectedPathways }),
+      });
+      if (res.ok) {
+        setIsEditPathwaysOpen(false);
+        await fetchChildData();
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setUpdatingPathways(false);
+    }
+  };
+
+  const togglePlanPathway = (pw: string) => {
+    if (planPathways.includes(pw)) {
+      if (planPathways.length > 1) {
+        setPlanPathways(planPathways.filter((p) => p !== pw));
+      }
+    } else {
+      setPlanPathways([...planPathways, pw]);
+    }
+  };
+
+  const toggleDomain = (domain: string) => {
+    if (planDomains.includes(domain)) {
+      if (planDomains.length > 1) {
+        setPlanDomains(planDomains.filter((d) => d !== domain));
+      }
+    } else {
+      setPlanDomains([...planDomains, domain]);
+    }
+  };
+
   const handleSavePlan = async (e: React.FormEvent) => {
     e.preventDefault();
     setSavingPlan(true);
@@ -213,6 +296,7 @@ export default function ChildDetailPage({ params }: { params: Promise<{ id: stri
         body: JSON.stringify({
           child_id: Number(childId),
           clinician_id: user?.id,
+          target_pathways: planPathways,
           target_domains: planDomains,
           min_difficulty: Number(minDiff),
           max_difficulty: Number(maxDiff),
@@ -261,16 +345,6 @@ export default function ChildDetailPage({ params }: { params: Promise<{ id: stri
     }
   };
 
-  const toggleDomain = (domain: string) => {
-    if (planDomains.includes(domain)) {
-      if (planDomains.length > 1) {
-        setPlanDomains(planDomains.filter((d) => d !== domain));
-      }
-    } else {
-      setPlanDomains([...planDomains, domain]);
-    }
-  };
-
   if (loading || !data) {
     return (
       <div className="cl-loading">
@@ -281,6 +355,12 @@ export default function ChildDetailPage({ params }: { params: Promise<{ id: stri
   }
 
   const { child, stats, domain_stats, therapy_plan, session_timeline } = data;
+  const activePathways = child.assigned_pathways || ["adhd"];
+
+  const filteredExercises = exercises.filter((ex) => {
+    if (assignFilterPathway === "all") return true;
+    return ex.pathway === assignFilterPathway;
+  });
 
   return (
     <>
@@ -340,10 +420,55 @@ export default function ChildDetailPage({ params }: { params: Promise<{ id: stri
               <h1 style={{ fontSize: "24px", fontWeight: 800, color: "#1A1035", margin: 0 }}>{child.name}</h1>
               <span className="cl-status-badge cl-status-badge--on-track">Patient #{child.id}</span>
             </div>
-            <div style={{ fontSize: "13.5px", color: "#6B6580", display: "flex", gap: "16px", flexWrap: "wrap" }}>
+            <div style={{ fontSize: "13.5px", color: "#6B6580", display: "flex", gap: "16px", flexWrap: "wrap", marginBottom: "8px" }}>
               <span>Age: <strong>{child.age} yrs</strong></span>
               <span>Condition: <strong>{child.condition}</strong></span>
               <span>Baseline: <strong>{child.baseline_score}/100</strong></span>
+            </div>
+
+            {/* Assigned Pathways Badges */}
+            <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ fontSize: "12px", color: "#6B6580", fontWeight: 600 }}>Active Pathways:</span>
+              {activePathways.map((pw) => {
+                const conf = PATHWAY_CONFIG[pw] || PATHWAY_CONFIG.adhd;
+                return (
+                  <span
+                    key={pw}
+                    style={{
+                      background: conf.bg,
+                      color: conf.color,
+                      border: `1px solid ${conf.border}`,
+                      padding: "2px 8px",
+                      borderRadius: "6px",
+                      fontSize: "11px",
+                      fontWeight: 700,
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    {conf.label}
+                  </span>
+                );
+              })}
+              <button
+                onClick={() => {
+                  setSelectedPathways(activePathways);
+                  setIsEditPathwaysOpen(true);
+                }}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "#7C3AED",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "3px",
+                  padding: "2px 6px",
+                }}
+              >
+                <Edit3 className="h-3 w-3" /> Edit Pathways
+              </button>
             </div>
           </div>
         </div>
@@ -351,6 +476,16 @@ export default function ChildDetailPage({ params }: { params: Promise<{ id: stri
         <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
           <button onClick={() => setIsAssignModalOpen(true)} className="cl-topbar-action-btn">
             <Plus className="h-4 w-4" /> Assign Exercise
+          </button>
+          <button
+            onClick={() => {
+              setSelectedPathways(activePathways);
+              setIsEditPathwaysOpen(true);
+            }}
+            className="cl-table-action-btn"
+            style={{ padding: "8px 16px", background: "#FAF8FF", borderColor: "#DDD6FE", display: "flex", alignItems: "center", gap: "6px" }}
+          >
+            <Sliders className="h-4 w-4" /> Manage Pathways
           </button>
           <button
             onClick={() => handleGenerateAI(true)}
@@ -431,7 +566,7 @@ export default function ChildDetailPage({ params }: { params: Promise<{ id: stri
         </div>
       </div>
 
-      {/* AI Clinician Insights Card (PRD Section 13 - Mistral Assisted) */}
+      {/* AI Clinician Insights Card */}
       {aiInsights && (
         <div className="cl-ai-insights-box">
           <div className="cl-ai-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
@@ -507,7 +642,7 @@ export default function ChildDetailPage({ params }: { params: Promise<{ id: stri
           </div>
 
           <p className="cl-ai-disclaimer">
-            {aiInsights.clinical_guidance} • <em>NeuroAdapt AI operates as clinician support only and does not formulate autonomous diagnoses.</em>
+            {aiInsights.clinical_guidance} • <em>NeuroAdapt AI operates as clinician support and progress monitoring only and does not formulate autonomous diagnoses.</em>
           </p>
         </div>
       )}
@@ -517,7 +652,7 @@ export default function ChildDetailPage({ params }: { params: Promise<{ id: stri
         <div className="cl-section-header">
           <div>
             <h2 className="cl-section-title">Prescribed Exercise Assignments</h2>
-            <p className="cl-section-subtitle">Exercises assigned to this child and real-time completion status</p>
+            <p className="cl-section-subtitle">Exercises assigned to this child across support pathways</p>
           </div>
           <button onClick={() => setIsAssignModalOpen(true)} className="cl-table-action-btn">
             <Plus className="h-4 w-4" /> New Assignment
@@ -540,6 +675,7 @@ export default function ChildDetailPage({ params }: { params: Promise<{ id: stri
               <thead>
                 <tr>
                   <th>Exercise</th>
+                  <th>Pathway</th>
                   <th>Domain</th>
                   <th>Assigned Difficulty</th>
                   <th>Status</th>
@@ -551,10 +687,27 @@ export default function ChildDetailPage({ params }: { params: Promise<{ id: stri
               <tbody>
                 {assignments.map((a) => {
                   const domConf = DOMAIN_CONFIG[a.domain] || DOMAIN_CONFIG.attention;
+                  const pwConf = PATHWAY_CONFIG[a.pathway || "adhd"] || PATHWAY_CONFIG.adhd;
                   const isCompleted = a.status === "completed";
                   return (
                     <tr key={a.id}>
                       <td style={{ fontWeight: 600, color: "#1A1035" }}>{a.exercise_name}</td>
+                      <td>
+                        <span
+                          style={{
+                            background: pwConf.bg,
+                            color: pwConf.color,
+                            border: `1px solid ${pwConf.border}`,
+                            padding: "2px 7px",
+                            borderRadius: "6px",
+                            fontSize: "11px",
+                            fontWeight: 700,
+                            textTransform: "uppercase",
+                          }}
+                        >
+                          {pwConf.label}
+                        </span>
+                      </td>
                       <td>
                         <span
                           style={{
@@ -606,7 +759,7 @@ export default function ChildDetailPage({ params }: { params: Promise<{ id: stri
         </div>
       </div>
 
-      {/* Therapy Plan & Therapeutic Boundaries Card (PRD Section 11) */}
+      {/* Therapy Plan & Therapeutic Boundaries Card */}
       <div className="cl-section">
         <div className="cl-section-header">
           <div>
@@ -631,18 +784,40 @@ export default function ChildDetailPage({ params }: { params: Promise<{ id: stri
         >
           <div>
             <span style={{ fontSize: "12px", color: "#9A94A9", textTransform: "uppercase", fontWeight: 700 }}>
-              Targeted Cognitive Domains
+              Target Pathways & Domains
             </span>
-            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "8px" }}>
-              {(therapy_plan?.target_domains || ["attention", "memory", "reasoning"]).map((dom) => (
+            <div style={{ display: "flex", gap: "5px", flexWrap: "wrap", marginTop: "8px", marginBottom: "8px" }}>
+              {(therapy_plan?.target_pathways || activePathways).map((pw) => {
+                const conf = PATHWAY_CONFIG[pw] || PATHWAY_CONFIG.adhd;
+                return (
+                  <span
+                    key={pw}
+                    style={{
+                      background: conf.bg,
+                      color: conf.color,
+                      border: `1px solid ${conf.border}`,
+                      padding: "2px 7px",
+                      borderRadius: "6px",
+                      fontSize: "11px",
+                      fontWeight: 700,
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    {conf.label}
+                  </span>
+                );
+              })}
+            </div>
+            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+              {(therapy_plan?.target_domains || ["attention", "working_memory"]).map((dom) => (
                 <span
                   key={dom}
                   style={{
                     background: "#F5F0FF",
                     color: "#7C3AED",
-                    padding: "4px 10px",
-                    borderRadius: "8px",
-                    fontSize: "12px",
+                    padding: "3px 8px",
+                    borderRadius: "6px",
+                    fontSize: "11px",
                     fontWeight: 600,
                     textTransform: "capitalize",
                   }}
@@ -693,7 +868,7 @@ export default function ChildDetailPage({ params }: { params: Promise<{ id: stri
         </div>
 
         <div className="cl-domain-matrix">
-          {Object.entries(DOMAIN_CONFIG).map(([key, config]) => {
+          {Object.entries(DOMAIN_CONFIG).slice(0, 4).map(([key, config]) => {
             const ds = domain_stats[key] || { sessions_count: 0, avg_accuracy: 0, avg_rt_ms: 0, max_difficulty: 1 };
             return (
               <div key={key} className="cl-domain-card">
@@ -722,7 +897,7 @@ export default function ChildDetailPage({ params }: { params: Promise<{ id: stri
         childId={child.id}
         childName={child.name}
         clinicianId={user?.id}
-        clinicianName={user?.name || "Dr. Poorvik"}
+        clinicianName={user?.name || "Dr. Rajesh Mehta"}
         apiUrl={apiUrl}
       />
 
@@ -747,6 +922,7 @@ export default function ChildDetailPage({ params }: { params: Promise<{ id: stri
                 <tr>
                   <th>Date & Time</th>
                   <th>Exercise</th>
+                  <th>Pathway</th>
                   <th>Domain</th>
                   <th>Difficulty</th>
                   <th>Accuracy</th>
@@ -758,6 +934,7 @@ export default function ChildDetailPage({ params }: { params: Promise<{ id: stri
               <tbody>
                 {session_timeline.map((s, idx) => {
                   const domConf = DOMAIN_CONFIG[s.domain] || DOMAIN_CONFIG.attention;
+                  const pwConf = PATHWAY_CONFIG[s.pathway || "adhd"] || PATHWAY_CONFIG.adhd;
                   return (
                     <tr key={idx}>
                       <td style={{ color: "#4C4658", fontWeight: 500 }}>
@@ -771,6 +948,22 @@ export default function ChildDetailPage({ params }: { params: Promise<{ id: stri
                           : "—"}
                       </td>
                       <td style={{ fontWeight: 600, color: "#1A1035" }}>{s.exercise_name}</td>
+                      <td>
+                        <span
+                          style={{
+                            background: pwConf.bg,
+                            color: pwConf.color,
+                            border: `1px solid ${pwConf.border}`,
+                            padding: "2px 7px",
+                            borderRadius: "6px",
+                            fontSize: "11px",
+                            fontWeight: 700,
+                            textTransform: "uppercase",
+                          }}
+                        >
+                          {pwConf.label}
+                        </span>
+                      </td>
                       <td>
                         <span
                           style={{
@@ -803,6 +996,90 @@ export default function ChildDetailPage({ params }: { params: Promise<{ id: stri
         </div>
       </div>
 
+      {/* Modal: Edit Assigned Pathways */}
+      {isEditPathwaysOpen && (
+        <div className="cl-modal-backdrop" onClick={() => setIsEditPathwaysOpen(false)}>
+          <div className="cl-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="cl-modal-header">
+              <h2 className="cl-modal-title">Edit Support Pathways for {child.name}</h2>
+              <button className="cl-modal-close-btn" onClick={() => setIsEditPathwaysOpen(false)}>
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSavePathways} className="cl-modal-form">
+              <p style={{ fontSize: "13px", color: "#6B6580", margin: "0 0 16px" }}>
+                Select one or multiple intervention pathways. For children with overlapping developmental profiles (e.g., ADHD + Dyslexia), activities from all checked pathways will be personalized in their dashboard.
+              </p>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "20px" }}>
+                {[
+                  {
+                    id: "adhd",
+                    title: "ADHD Pathway",
+                    desc: "Focus matrix, working memory flips, step sequencing & cognitive flexibility rules.",
+                    color: "#7C3AED",
+                    bg: "#F5F0FF",
+                  },
+                  {
+                    id: "dyslexia",
+                    title: "Dyslexia Pathway",
+                    desc: "Letter recognition, phonological rhyming, sight word sprints & story comprehension.",
+                    color: "#2563EB",
+                    bg: "#EFF6FF",
+                  },
+                  {
+                    id: "speech",
+                    title: "Speech & Language Pathway",
+                    desc: "Picture vocabulary, sentence builder, auditory listening & sound articulation practice.",
+                    color: "#059669",
+                    bg: "#ECFDF5",
+                  },
+                ].map((pw) => {
+                  const isChecked = selectedPathways.includes(pw.id);
+                  return (
+                    <label
+                      key={pw.id}
+                      onClick={() => togglePathway(pw.id)}
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: "12px",
+                        padding: "14px",
+                        borderRadius: "12px",
+                        border: `1.5px solid ${isChecked ? pw.color : "#E8E2F5"}`,
+                        background: isChecked ? pw.bg : "white",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => {}}
+                        style={{ marginTop: "3px", accentColor: pw.color }}
+                      />
+                      <div>
+                        <div style={{ fontWeight: 700, color: "#1A1035", fontSize: "14px" }}>{pw.title}</div>
+                        <div style={{ fontSize: "12.5px", color: "#6B6580", marginTop: "2px" }}>{pw.desc}</div>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+
+              <div className="cl-modal-actions">
+                <button type="button" onClick={() => setIsEditPathwaysOpen(false)} className="cl-modal-btn-cancel">
+                  Cancel
+                </button>
+                <button type="submit" disabled={updatingPathways || selectedPathways.length === 0} className="cl-modal-btn-submit">
+                  {updatingPathways ? "Saving Pathways..." : "Save Pathways"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Modal: Assign Exercise */}
       {isAssignModalOpen && (
         <div className="cl-modal-backdrop" onClick={() => setIsAssignModalOpen(false)}>
@@ -815,6 +1092,38 @@ export default function ChildDetailPage({ params }: { params: Promise<{ id: stri
             </div>
 
             <form onSubmit={handleCreateAssignment} className="cl-modal-form">
+              {/* Pathway Filter Tabs */}
+              <div style={{ display: "flex", gap: "6px", marginBottom: "14px", borderBottom: "1px solid #F0ECF9", paddingBottom: "10px" }}>
+                {[
+                  { id: "all", label: "All Pathways" },
+                  { id: "adhd", label: "ADHD" },
+                  { id: "dyslexia", label: "Dyslexia" },
+                  { id: "speech", label: "Speech & Lang" },
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => {
+                      setAssignFilterPathway(tab.id);
+                      const matching = exercises.filter((ex) => tab.id === "all" || ex.pathway === tab.id);
+                      if (matching.length > 0) setSelectedExId(matching[0].id);
+                    }}
+                    style={{
+                      padding: "6px 12px",
+                      borderRadius: "8px",
+                      border: "none",
+                      background: assignFilterPathway === tab.id ? "#7C3AED" : "#F5F0FF",
+                      color: assignFilterPathway === tab.id ? "white" : "#6B6580",
+                      fontWeight: 600,
+                      fontSize: "12px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
               <div className="cl-form-group">
                 <label className="cl-form-label">Select Cognitive Exercise *</label>
                 <select
@@ -822,9 +1131,9 @@ export default function ChildDetailPage({ params }: { params: Promise<{ id: stri
                   onChange={(e) => setSelectedExId(Number(e.target.value))}
                   className="cl-form-select"
                 >
-                  {exercises.map((ex) => (
+                  {filteredExercises.map((ex) => (
                     <option key={ex.id} value={ex.id}>
-                      {ex.name} ({ex.domain.replace("_", " ").toUpperCase()})
+                      [{ex.pathway?.toUpperCase() || "CORE"}] {ex.name} — {ex.domain.replace("_", " ").toUpperCase()} (Base Lvl {ex.difficulty})
                     </option>
                   ))}
                 </select>
@@ -857,7 +1166,7 @@ export default function ChildDetailPage({ params }: { params: Promise<{ id: stri
                 <button type="button" onClick={() => setIsAssignModalOpen(false)} className="cl-modal-btn-cancel">
                   Cancel
                 </button>
-                <button type="submit" disabled={assigning} className="cl-modal-btn-submit">
+                <button type="submit" disabled={assigning || !selectedExId} className="cl-modal-btn-submit">
                   {assigning ? "Assigning..." : "Assign to Child"}
                 </button>
               </div>
@@ -871,17 +1180,61 @@ export default function ChildDetailPage({ params }: { params: Promise<{ id: stri
         <div className="cl-modal-backdrop" onClick={() => setIsPlanModalOpen(false)}>
           <div className="cl-modal-card" onClick={(e) => e.stopPropagation()}>
             <div className="cl-modal-header">
-              <h2 className="cl-modal-title">Configure Therapy Plan</h2>
+              <h2 className="cl-modal-title">Configure Therapy Plan & Safety Boundaries</h2>
               <button className="cl-modal-close-btn" onClick={() => setIsPlanModalOpen(false)}>
                 <X className="h-4 w-4" />
               </button>
             </div>
 
             <form onSubmit={handleSavePlan} className="cl-modal-form">
+              {/* Target Pathways */}
+              <div className="cl-form-group">
+                <label className="cl-form-label">Target Support Pathways *</label>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "8px" }}>
+                  {[
+                    { id: "adhd", label: "ADHD", color: "#7C3AED", bg: "#F5F0FF" },
+                    { id: "dyslexia", label: "Dyslexia", color: "#2563EB", bg: "#EFF6FF" },
+                    { id: "speech", label: "Speech & Lang", color: "#059669", bg: "#ECFDF5" },
+                  ].map((pw) => {
+                    const isSelected = planPathways.includes(pw.id);
+                    return (
+                      <button
+                        type="button"
+                        key={pw.id}
+                        onClick={() => togglePlanPathway(pw.id)}
+                        style={{
+                          padding: "10px",
+                          borderRadius: "10px",
+                          border: "1.5px solid",
+                          borderColor: isSelected ? pw.color : "#E8E2F5",
+                          background: isSelected ? pw.bg : "white",
+                          color: isSelected ? pw.color : "#6B6580",
+                          fontWeight: 700,
+                          fontSize: "12.5px",
+                          cursor: "pointer",
+                          textAlign: "center",
+                        }}
+                      >
+                        {isSelected ? "✓ " : ""}{pw.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               <div className="cl-form-group">
                 <label className="cl-form-label">Target Cognitive Domains *</label>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-                  {["attention", "memory", "reasoning", "problem_solving"].map((d) => {
+                  {[
+                    "attention",
+                    "working_memory",
+                    "sequencing",
+                    "letter_recognition",
+                    "phonological_awareness",
+                    "vocabulary",
+                    "sentence_construction",
+                    "speech_sound",
+                  ].map((d) => {
                     const isSelected = planDomains.includes(d);
                     return (
                       <button
@@ -889,14 +1242,14 @@ export default function ChildDetailPage({ params }: { params: Promise<{ id: stri
                         key={d}
                         onClick={() => toggleDomain(d)}
                         style={{
-                          padding: "10px",
+                          padding: "8px 10px",
                           borderRadius: "10px",
                           border: "1.5px solid",
                           borderColor: isSelected ? "#7C3AED" : "#E8E2F5",
                           background: isSelected ? "#F5F0FF" : "white",
                           color: isSelected ? "#7C3AED" : "#6B6580",
                           fontWeight: 600,
-                          fontSize: "13px",
+                          fontSize: "12px",
                           cursor: "pointer",
                           textTransform: "capitalize",
                           textAlign: "center",

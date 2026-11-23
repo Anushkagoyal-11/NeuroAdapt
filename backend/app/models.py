@@ -1,6 +1,11 @@
 """
-SQLAlchemy ORM Models for NeuroAdapt Platform (SIH260206).
-Matches Section 17 Database Schema requirements.
+SQLAlchemy ORM Models for NeuroAdapt Multi-Pathway Developmental Platform.
+Supports:
+- ADHD Pathway (Attention, Working Memory, Sequencing, Cognitive Flexibility)
+- Dyslexia Pathway (Letter Recognition, Phonological Awareness, Word Recognition, Reading Fluency & Comprehension, Spelling)
+- Speech & Language Pathway (Vocabulary, Sentence Construction, Listening Comprehension, Speech Sound Practice)
+- Multi-pathway personalization (children can have 1, 2, or all 3 pathways assigned)
+- Child and Clinician roles, accounts, and longitudinal monitoring
 """
 
 from datetime import datetime
@@ -19,74 +24,118 @@ class User(Base):
     role = Column(String(30), nullable=False)  # "child", "clinician", "admin"
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    # Relationships
+    children_as_clinician = relationship(
+        "Child",
+        foreign_keys="Child.clinician_id",
+        backref="clinician",
+        lazy="select"
+    )
+    notifications = relationship(
+        "Notification",
+        backref="user",
+        lazy="select",
+        cascade="all, delete-orphan"
+    )
+
+
 class Child(Base):
     __tablename__ = "children"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     caregiver_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    clinician_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    clinician_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     name = Column(String(120), nullable=False)
     age = Column(Integer, nullable=False, default=8)
+    # Stored as JSON list of strings, e.g. ["adhd", "dyslexia"]
+    assigned_pathways = Column(JSON, nullable=True, default=lambda: ["adhd"])
     profile_data = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    user = relationship("User", foreign_keys=[user_id], backref="child_profile", lazy="select")
+    sessions = relationship("SessionRecord", backref="child", lazy="select", cascade="all, delete-orphan")
+    therapy_plans = relationship("TherapyPlan", backref="child", lazy="select", cascade="all, delete-orphan")
+    assignments = relationship("Assignment", backref="child", lazy="select", cascade="all, delete-orphan")
+    voice_interviews = relationship("VoiceInterview", backref="child", lazy="select", cascade="all, delete-orphan")
+
 
 class Exercise(Base):
     __tablename__ = "exercises"
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False)
-    domain = Column(String(50), nullable=False)  # "attention", "memory", "reasoning", "problem_solving"
+    # Primary pathway: "adhd", "dyslexia", "speech"
+    pathway = Column(String(50), nullable=False, default="adhd", index=True)
+    # Specific skill domain within pathway
+    # ADHD: attention, working_memory, sequencing, cognitive_flexibility
+    # Dyslexia: letter_recognition, phonological, word_recognition, reading_comprehension, spelling
+    # Speech: vocabulary, sentence_construction, listening_comprehension, speech_sound, communication
+    domain = Column(String(50), nullable=False, index=True)
     difficulty = Column(Integer, default=1)
+    description = Column(String(255), nullable=True)
+    instructions = Column(Text, nullable=True)
     configuration = Column(JSON, nullable=True)
+
 
 class TherapyPlan(Base):
     __tablename__ = "therapy_plans"
 
     id = Column(Integer, primary_key=True, index=True)
-    child_id = Column(Integer, ForeignKey("children.id"), nullable=False)
+    child_id = Column(Integer, ForeignKey("children.id"), nullable=False, index=True)
     clinician_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    target_pathways = Column(JSON, nullable=True, default=lambda: ["adhd"])
     target_domains = Column(JSON, nullable=False)  # list of target domains
     min_difficulty = Column(Integer, default=1)
     max_difficulty = Column(Integer, default=10)
     schedule_notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+
 class SessionRecord(Base):
     __tablename__ = "sessions"
 
     id = Column(Integer, primary_key=True, index=True)
-    child_id = Column(Integer, ForeignKey("children.id"), nullable=False)
-    exercise_id = Column(Integer, ForeignKey("exercises.id"), nullable=False)
+    child_id = Column(Integer, ForeignKey("children.id"), nullable=False, index=True)
+    exercise_id = Column(Integer, ForeignKey("exercises.id"), nullable=False, index=True)
     started_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)
+
+    exercise = relationship("Exercise", backref="sessions", lazy="select")
+    performance = relationship("Performance", backref="session", uselist=False, lazy="select", cascade="all, delete-orphan")
+
 
 class Performance(Base):
     __tablename__ = "performance"
 
     id = Column(Integer, primary_key=True, index=True)
-    session_id = Column(Integer, ForeignKey("sessions.id"), nullable=False)
+    session_id = Column(Integer, ForeignKey("sessions.id"), nullable=False, index=True)
     score = Column(Integer, default=0)
     accuracy = Column(Float, default=0.0)
     response_time = Column(Float, default=0.0)  # ms
     errors = Column(Integer, default=0)
     difficulty = Column(Integer, default=1)
 
+
 class Recommendation(Base):
     __tablename__ = "recommendations"
 
     id = Column(Integer, primary_key=True, index=True)
-    child_id = Column(Integer, ForeignKey("children.id"), nullable=False)
+    child_id = Column(Integer, ForeignKey("children.id"), nullable=False, index=True)
     session_id = Column(Integer, ForeignKey("sessions.id"), nullable=True)
+    pathway = Column(String(50), nullable=True, default="adhd")
     recommended_difficulty = Column(Integer, nullable=False)
     recommended_exercise = Column(String(100), nullable=False)
-    model_version = Column(String(50), default="ScratchDecisionTree_v1")
+    model_version = Column(String(50), default="NeuroAdaptRuleRecommender_v2")
     created_at = Column(DateTime, default=datetime.utcnow)
+
 
 class Assignment(Base):
     __tablename__ = "assignments"
 
     id = Column(Integer, primary_key=True, index=True)
-    child_id = Column(Integer, ForeignKey("children.id"), nullable=False)
+    child_id = Column(Integer, ForeignKey("children.id"), nullable=False, index=True)
     clinician_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     exercise_id = Column(Integer, ForeignKey("exercises.id"), nullable=False)
     difficulty = Column(Integer, default=1)
@@ -96,14 +145,17 @@ class Assignment(Base):
     completed_at = Column(DateTime, nullable=True)
     session_id = Column(Integer, ForeignKey("sessions.id"), nullable=True)
 
+    exercise = relationship("Exercise", lazy="select")
+
+
 class Notification(Base):
     __tablename__ = "notifications"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     title = Column(String(150), nullable=False)
     message = Column(Text, nullable=False)
-    type = Column(String(50), default="assignment")  # "assignment", "session_complete", "alert"
+    type = Column(String(50), default="assignment")  # "assignment", "session_complete", "alert", "telegram_dispatch"
     link = Column(String(200), nullable=True)
     is_read = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -113,7 +165,7 @@ class VoiceInterview(Base):
     __tablename__ = "voice_interviews"
 
     id = Column(Integer, primary_key=True, index=True)
-    child_id = Column(Integer, ForeignKey("children.id"), nullable=False)
+    child_id = Column(Integer, ForeignKey("children.id"), nullable=False, index=True)
     duration_seconds = Column(Integer, default=75)
     challenges_completed = Column(Integer, default=3)
     overall_accuracy = Column(Float, default=0.0)
@@ -126,6 +178,3 @@ class VoiceInterview(Base):
     ai_observation = Column(Text, nullable=True)
     transcript = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-
-
-

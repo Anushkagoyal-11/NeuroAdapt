@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { Trophy, Star, Lock } from "lucide-react";
-import { useChildContext } from "../layout";
+import { useChildContext } from "../ChildContext";
 
 interface Achievement {
   id: string;

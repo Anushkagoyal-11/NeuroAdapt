@@ -14,7 +14,7 @@ import {
   ChevronRight,
   Check,
 } from "lucide-react";
-import { useChildContext } from "../layout";
+import { useChildContext } from "../ChildContext";
 import { useRouter } from "next/navigation";
 
 export default function SettingsPage() {

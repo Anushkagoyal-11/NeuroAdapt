@@ -11,7 +11,7 @@ import {
   Clock,
   BarChart3,
 } from "lucide-react";
-import { useChildContext } from "../layout";
+import { useChildContext } from "../ChildContext";
 
 const DOMAIN_CONFIG: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
   attention: { label: "Attention", color: "#7C3AED", icon: <Target className="h-5 w-5" strokeWidth={1.8} /> },

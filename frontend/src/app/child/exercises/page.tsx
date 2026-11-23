@@ -9,34 +9,32 @@ import {
   Play,
   Zap,
   Search,
-  Filter,
-  Clock,
+  BookOpen,
   Mic,
+  Activity,
+  Sparkles,
+  CheckCircle2,
 } from "lucide-react";
-import { useChildContext } from "../layout";
+import { useChildContext } from "../ChildContext";
 import InteractiveExerciseGame, { ExercisePlayConfig } from "../components/InteractiveExerciseGame";
-
-const DOMAIN_CONFIG: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
-  attention: { label: "Attention", color: "#7C3AED", icon: <Target className="h-7 w-7" strokeWidth={1.6} /> },
-  memory: { label: "Memory", color: "#8B5CF6", icon: <Brain className="h-7 w-7" strokeWidth={1.6} /> },
-  reasoning: { label: "Reasoning", color: "#6D28D9", icon: <Lightbulb className="h-7 w-7" strokeWidth={1.6} /> },
-  problem_solving: { label: "Problem Solving", color: "#9333EA", icon: <Puzzle className="h-7 w-7" strokeWidth={1.6} /> },
-};
 
 interface ExerciseData {
   id: number;
   name: string;
+  pathway: string;
   domain: string;
   difficulty: number;
+  description?: string;
+  instructions?: string;
   configuration: Record<string, unknown>;
 }
 
 export default function ExercisesPage() {
-  const { user, apiUrl } = useChildContext();
+  const { user, apiUrl, activePathwayFilter, setActivePathwayFilter } = useChildContext();
   const [exercises, setExercises] = useState<ExerciseData[]>([]);
   const [domainLevels, setDomainLevels] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<string>("all");
+  const [pathwayFilter, setPathwayFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [activeGameConfig, setActiveGameConfig] = useState<ExercisePlayConfig | null>(null);
 
@@ -56,15 +54,9 @@ export default function ExercisesPage() {
         const dashData = await dashRes.json();
         if (dashData.domain_stats) {
           const lvls: Record<string, number> = {};
-          if (Array.isArray(dashData.domain_stats)) {
-            dashData.domain_stats.forEach((d: any) => {
-              lvls[d.domain] = d.level || d.max_difficulty || 1;
-            });
-          } else if (typeof dashData.domain_stats === "object") {
-            Object.entries(dashData.domain_stats).forEach(([dom, s]: [string, any]) => {
-              lvls[dom] = s.level || s.max_difficulty || 1;
-            });
-          }
+          Object.entries(dashData.domain_stats).forEach(([dom, s]: [string, any]) => {
+            lvls[dom] = s.level || s.max_difficulty || 1;
+          });
           setDomainLevels(lvls);
         }
       }
@@ -79,17 +71,34 @@ export default function ExercisesPage() {
     fetchExercisesAndStats();
   }, [apiUrl, user?.id]);
 
-  const difficultyLabel = (d: number) => (d <= 2 ? "Easy" : d <= 5 ? "Medium" : "Hard");
+  const difficultyLabel = (d: number) => (d <= 2 ? "Beginner" : d <= 5 ? "Intermediate" : "Advanced");
   const difficultyColor = (d: string) => {
-    if (d === "Easy") return { bg: "#ECFDF5", text: "#059669" };
-    if (d === "Medium") return { bg: "#FFF7ED", text: "#D97706" };
+    if (d === "Beginner") return { bg: "#ECFDF5", text: "#059669" };
+    if (d === "Intermediate") return { bg: "#FFF7ED", text: "#D97706" };
     return { bg: "#FEF2F2", text: "#DC2626" };
   };
 
+  const pathwayBadge = (pathway: string) => {
+    switch (pathway.toLowerCase()) {
+      case "adhd":
+        return { label: "ADHD", bg: "#F3E8FF", color: "#7C3AED", icon: <Activity className="h-3.5 w-3.5" /> };
+      case "dyslexia":
+        return { label: "Dyslexia", bg: "#EFF6FF", color: "#2563EB", icon: <BookOpen className="h-3.5 w-3.5" /> };
+      case "speech":
+        return { label: "Speech & Language", bg: "#ECFDF5", color: "#059669", icon: <Mic className="h-3.5 w-3.5" /> };
+      default:
+        return { label: pathway.toUpperCase(), bg: "#F3F4F6", color: "#4B5563", icon: <Sparkles className="h-3.5 w-3.5" /> };
+    }
+  };
+
   const filtered = exercises.filter((ex) => {
-    const matchesDomain = filter === "all" || ex.domain === filter;
-    const matchesSearch = !searchQuery || ex.name.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesDomain && matchesSearch;
+    const matchesPathway = pathwayFilter === "all" || ex.pathway.toLowerCase() === pathwayFilter.toLowerCase();
+    const matchesSearch =
+      !searchQuery ||
+      ex.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      ex.domain.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (ex.description && ex.description.toLowerCase().includes(searchQuery.toLowerCase()));
+    return matchesPathway && matchesSearch;
   });
 
   const handleStartGame = (ex: ExerciseData) => {
@@ -97,6 +106,7 @@ export default function ExercisesPage() {
     setActiveGameConfig({
       exerciseId: ex.id,
       exerciseName: ex.name,
+      pathway: ex.pathway,
       domain: ex.domain,
       difficulty: currentLevel,
     });
@@ -106,7 +116,7 @@ export default function ExercisesPage() {
     return (
       <div className="cd-page-loading">
         <div className="cd-loading-spinner" />
-        <span>Loading exercises...</span>
+        <span>Loading intervention modules...</span>
       </div>
     );
   }
@@ -115,107 +125,125 @@ export default function ExercisesPage() {
     <>
       {/* Page header */}
       <div className="cd-page-header">
-        <h1 className="cd-page-heading">Exercises</h1>
-        <p className="cd-page-desc">Interactive cognitive retraining modules</p>
+        <h1 className="cd-page-heading">Intervention Exercises</h1>
+        <p className="cd-page-desc">Interactive activities tailored across ADHD, Dyslexia, and Speech pathways</p>
       </div>
 
-      {/* Filters bar */}
+      {/* Pathway Tabs & Filter Bar */}
       <div className="cd-filters-bar">
         <div className="cd-search-box">
           <Search className="h-4 w-4 cd-search-icon" />
           <input
             type="text"
-            placeholder="Search exercises..."
+            placeholder="Search exercises, skills, words..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="cd-search-input"
           />
         </div>
+
         <div className="cd-filter-chips">
-          <button
-            className={`cd-filter-chip ${filter === "all" ? "cd-filter-chip--active" : ""}`}
-            onClick={() => setFilter("all")}
-          >
-            All Modules
-          </button>
-          {Object.entries(DOMAIN_CONFIG).map(([key, config]) => (
+          {[
+            { id: "all", label: "All Pathways" },
+            { id: "adhd", label: "ADHD Pathway" },
+            { id: "dyslexia", label: "Dyslexia Pathway" },
+            { id: "speech", label: "Speech & Language" },
+          ].map((tab) => (
             <button
-              key={key}
-              className={`cd-filter-chip ${filter === key ? "cd-filter-chip--active" : ""}`}
-              onClick={() => setFilter(key)}
+              key={tab.id}
+              className={`cd-filter-chip ${pathwayFilter === tab.id ? "cd-filter-chip--active" : ""}`}
+              onClick={() => setPathwayFilter(tab.id)}
             >
-              {config.label}
+              {tab.label}
             </button>
           ))}
         </div>
       </div>
 
-      {/* Exercises grid */}
-      {filtered.length === 0 ? (
-        <div className="cd-empty-state">
-          <span className="cd-empty-emoji">🔍</span>
-          <p>{exercises.length === 0 ? "No exercises configured yet." : "No exercises match your filter."}</p>
-        </div>
-      ) : (
-        <div className="cd-exercises-page-grid">
-          {filtered.map((ex, i) => {
-            const domConf = DOMAIN_CONFIG[ex.domain] || DOMAIN_CONFIG.attention;
-            const liveDiff = domainLevels[ex.domain] || ex.difficulty || 1;
-            const dl = difficultyLabel(liveDiff);
-            const dc = difficultyColor(dl);
-            return (
-              <div key={ex.id} className="cd-exercise-page-card" style={{ animationDelay: `${i * 80}ms` }}>
-                <div className="cd-exercise-page-icon" style={{ background: `${domConf.color}0D` }}>
-                  <div style={{ color: domConf.color }}>{domConf.icon}</div>
-                </div>
-                <div className="cd-exercise-page-tags">
-                  <span style={{ background: `${domConf.color}12`, color: domConf.color }} className="cd-exercise-domain-tag">
-                    {domConf.label}
+      {/* Exercises Grid */}
+      <div className="cd-exercises-grid">
+        {filtered.map((ex) => {
+          const badge = pathwayBadge(ex.pathway);
+          const diffLvl = domainLevels[ex.domain] || ex.difficulty || 1;
+          const diffText = difficultyLabel(diffLvl);
+          const diffStyle = difficultyColor(diffText);
+
+          return (
+            <div key={ex.id} className="cd-exercise-card">
+              <div className="cd-exercise-card-top">
+                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center" }}>
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "4px",
+                      background: badge.bg,
+                      color: badge.color,
+                      fontSize: "11px",
+                      fontWeight: 700,
+                      padding: "3px 8px",
+                      borderRadius: "6px",
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    {badge.icon} {badge.label}
                   </span>
-                  <span style={{ background: dc.bg, color: dc.text }} className="cd-exercise-diff-tag">
-                    {dl}
-                  </span>
-                  {ex.name.toLowerCase().includes("voice") && (
-                    <span style={{ background: "#EDE9FE", color: "#6D28D9", display: "inline-flex", alignItems: "center", gap: "3px" }} className="cd-exercise-diff-tag">
-                      <Mic className="h-3 w-3" /> Voice AI
-                    </span>
-                  )}
-                </div>
-                <h3 className="cd-exercise-page-title">{ex.name}</h3>
-                <div className="cd-exercise-page-meta">
-                  <span>
-                    <Zap className="h-3.5 w-3.5" /> Level {liveDiff}/10
+                  <span
+                    style={{
+                      background: diffStyle.bg,
+                      color: diffStyle.text,
+                      fontSize: "11px",
+                      fontWeight: 700,
+                      padding: "3px 8px",
+                      borderRadius: "6px",
+                    }}
+                  >
+                    Level {diffLvl} ({diffText})
                   </span>
                 </div>
-                <button
-                  onClick={() => handleStartGame(ex)}
-                  className="cd-exercise-page-play"
-                  style={{ background: domConf.color }}
-                >
-                  <Play className="h-4 w-4" fill="white" /> Start Exercise
+              </div>
+
+              <div className="cd-exercise-card-body">
+                <h3 className="cd-exercise-card-title">{ex.name}</h3>
+                <p style={{ fontSize: "12.5px", color: "#6B6580", margin: "4px 0 12px", lineHeight: 1.4 }}>
+                  {ex.description || `Specialized ${badge.label} activity targeting ${ex.domain.replace("_", " ")}.`}
+                </p>
+                <span style={{ fontSize: "11.5px", color: "#7C3AED", fontWeight: 600 }}>
+                  Skill: {ex.domain.replace("_", " ").toUpperCase()}
+                </span>
+              </div>
+
+              <div className="cd-exercise-card-bottom">
+                <button onClick={() => handleStartGame(ex)} className="cd-exercise-play-btn">
+                  <Play className="h-4 w-4" fill="currentColor" /> Play Activity
                 </button>
               </div>
-            );
-          })}
+            </div>
+          );
+        })}
+      </div>
+
+      {filtered.length === 0 && (
+        <div style={{ textAlign: "center", padding: "40px", color: "#6B6580" }}>
+          <p>No activities match the selected filter.</p>
         </div>
       )}
 
-      {/* Interactive Game Runner Modal */}
-      {activeGameConfig && (
+      {/* Active Game Modal */}
+      {activeGameConfig && user && (
         <InteractiveExerciseGame
           config={activeGameConfig}
-          childId={user?.id || 1}
+          childId={user.id}
           apiUrl={apiUrl}
-          onClose={() => setActiveGameConfig(null)}
+          onClose={() => {
+            setActiveGameConfig(null);
+            fetchExercisesAndStats();
+          }}
           onComplete={() => {
             fetchExercisesAndStats();
           }}
         />
       )}
-
-      <footer className="cd-footer">
-        <span>NeuroAdapt © 2026 — AI-assisted cognitive rehabilitation</span>
-      </footer>
     </>
   );
 }

@@ -1,5 +1,6 @@
 """
-Pydantic Schemas for Request & Response Serialization.
+Pydantic Schemas for Request & Response Serialization in NeuroAdapt Platform.
+Supports Child, Clinician, multi-pathway assignments, and progress telemetry.
 """
 
 from datetime import datetime
@@ -14,19 +15,40 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     password: str
     age: Optional[int] = 8
-    condition: Optional[str] = "Cognitive Support"
+    condition: Optional[str] = "Developmental Cognitive Support"
+    pathways: Optional[List[str]] = ["adhd"]
 
 class UserResponse(UserBase):
     id: int
     created_at: datetime
+    age: Optional[int] = None
+    assigned_pathways: Optional[List[str]] = None
 
     class Config:
         from_attributes = True
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+    role: Optional[str] = "child"
+
+class SignupRequest(BaseModel):
+    name: str
+    email: str
+    password: str
+    role: str
+    age: Optional[int] = 8
+    condition: Optional[str] = "Developmental Cognitive Support"
+    pathways: Optional[List[str]] = ["adhd"]
+
+class ChildPathwaysUpdateRequest(BaseModel):
+    assigned_pathways: List[str]
 
 class SessionCompleteRequest(BaseModel):
     child_id: int
     exercise_id: int
     domain: str
+    pathway: Optional[str] = "adhd"
     difficulty: int
     score: int
     accuracy: float
@@ -62,11 +84,13 @@ class ChildCreateRequest(BaseModel):
     caregiver_id: Optional[int] = None
     condition: Optional[str] = "Developmental Cognitive Support"
     baseline_score: Optional[int] = 70
+    assigned_pathways: Optional[List[str]] = ["adhd"]
 
 class TherapyPlanCreateRequest(BaseModel):
     child_id: int
     clinician_id: Optional[int] = None
-    target_domains: List[str] = ["attention", "memory", "reasoning"]
+    target_pathways: Optional[List[str]] = ["adhd"]
+    target_domains: List[str] = ["attention", "working_memory"]
     min_difficulty: int = 1
     max_difficulty: int = 10
     schedule_notes: Optional[str] = "3 sessions per week, 15 minutes each"
@@ -87,6 +111,7 @@ class SessionCompletionPayload(BaseModel):
     response_time_ms: float = 0.0
     errors: int = 0
     assignment_id: Optional[int] = None
+    pathway: Optional[str] = None
 
 class VoiceInterviewSubmitPayload(BaseModel):
     child_id: int
@@ -101,12 +126,7 @@ class VoiceInterviewSubmitPayload(BaseModel):
     adaptive_changes: Optional[Dict[str, Any]] = None
     transcript: Optional[List[Dict[str, Any]]] = None
 
-
 class TelegramDispatchPayload(BaseModel):
     child_id: int
     message: str
     chat_id: Optional[str] = None
-
-
-
-

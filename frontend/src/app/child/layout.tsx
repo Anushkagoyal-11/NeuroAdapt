@@ -1,10 +1,6 @@
-
-
-
-
 "use client";
 
-import React, { useState, useEffect, createContext, useContext } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import {
@@ -13,51 +9,12 @@ import {
   Gamepad2,
   BarChart3,
   Trophy,
-  TrendingUp,
-  Award,
   Settings,
   LogOut,
-  Bell,
-  Search,
-  ChevronRight,
-  Sparkles,
 } from "lucide-react";
 import NotificationBell from "../components/NotificationBell";
+import { ChildContext, UserProfile } from "./ChildContext";
 import "./child-dashboard.css";
-
-/* ═══════════════════════════════════════════════════════════════════════ */
-/*                       USER CONTEXT                                    */
-/* ═══════════════════════════════════════════════════════════════════════ */
-
-interface UserProfile {
-  id: number;
-  name: string;
-  email: string;
-  role: string;
-  age?: number;
-}
-
-interface ChildContextType {
-  user: UserProfile | null;
-  apiUrl: string;
-  theme: "light" | "dark";
-  setTheme: (t: "light" | "dark") => void;
-  fontSize: "normal" | "large" | "xlarge";
-  setFontSize: (s: "normal" | "large" | "xlarge") => void;
-}
-
-const ChildContext = createContext<ChildContextType>({
-  user: null,
-  apiUrl: "",
-  theme: "light",
-  setTheme: () => {},
-  fontSize: "normal",
-  setFontSize: () => {},
-});
-
-export function useChildContext() {
-  return useContext(ChildContext);
-}
 
 /* ═══════════════════════════════════════════════════════════════════════ */
 /*                           SIDEBAR                                     */
@@ -125,7 +82,7 @@ function Sidebar({
           </div>
           <div className="cd-sidebar-user-info">
             <span className="cd-sidebar-user-name">{userName}</span>
-            <span className="cd-sidebar-user-role">Child</span>
+            <span className="cd-sidebar-user-role">Child Portal</span>
           </div>
         </div>
         <button onClick={onLogout} className="cd-sidebar-logout">
@@ -138,7 +95,7 @@ function Sidebar({
 }
 
 /* ═══════════════════════════════════════════════════════════════════════ */
-/*                         LAYOUT                                        */
+/*                         MAIN LAYOUT                                   */
 /* ═══════════════════════════════════════════════════════════════════════ */
 
 export default function ChildLayout({ children }: { children: React.ReactNode }) {
@@ -148,8 +105,12 @@ export default function ChildLayout({ children }: { children: React.ReactNode })
   const [mounted, setMounted] = useState(false);
   const [theme, setThemeState] = useState<"light" | "dark">("light");
   const [fontSize, setFontSizeState] = useState<"normal" | "large" | "xlarge">("normal");
+  const [activePathwayFilter, setActivePathwayFilter] = useState<string>("all");
+  const [refreshTrigger, setRefreshTrigger] = useState<number>(0);
 
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+  const triggerRefresh = () => setRefreshTrigger((prev) => prev + 1);
 
   // Derive page title from pathname
   const pageTitle = (() => {
@@ -164,12 +125,21 @@ export default function ChildLayout({ children }: { children: React.ReactNode })
   useEffect(() => {
     setMounted(true);
     try {
-      // Load user
       const stored = localStorage.getItem("neuroadapt_user");
       if (stored) {
         const parsed = JSON.parse(stored);
         if (parsed.role === "child") {
           setUser(parsed);
+          // Pre-fetch updated user profile & assigned pathways
+          fetch(`${apiUrl}/api/auth/me?user_id=${parsed.id}`)
+            .then((res) => (res.ok ? res.json() : null))
+            .then((data) => {
+              if (data?.user) {
+                setUser(data.user);
+                localStorage.setItem("neuroadapt_user", JSON.stringify(data.user));
+              }
+            })
+            .catch(() => {});
         } else if (parsed.role === "clinician") {
           router.replace("/clinician");
         } else {
@@ -193,7 +163,7 @@ export default function ChildLayout({ children }: { children: React.ReactNode })
     } catch {
       router.replace("/auth?role=child");
     }
-  }, [router]);
+  }, [router, apiUrl]);
 
   const setTheme = (t: "light" | "dark") => {
     setThemeState(t);
@@ -211,6 +181,7 @@ export default function ChildLayout({ children }: { children: React.ReactNode })
 
   const handleLogout = () => {
     localStorage.removeItem("neuroadapt_user");
+    localStorage.removeItem("neuroadapt_token");
     router.push("/auth?role=child");
   };
 
@@ -223,10 +194,23 @@ export default function ChildLayout({ children }: { children: React.ReactNode })
     );
   }
 
-  const displayName = user.name || user.email?.split("@")[0] || "User";
+  const displayName = user.name || user.email?.split("@")[0] || "Learner";
 
   return (
-    <ChildContext.Provider value={{ user, apiUrl, theme, setTheme, fontSize, setFontSize }}>
+    <ChildContext.Provider
+      value={{
+        user,
+        apiUrl,
+        theme,
+        setTheme,
+        fontSize,
+        setFontSize,
+        activePathwayFilter,
+        setActivePathwayFilter,
+        refreshTrigger,
+        triggerRefresh,
+      }}
+    >
       <div className={`cd-layout cd-theme-${theme} cd-font-${fontSize}`} data-theme={theme}>
         <Sidebar userName={displayName} onLogout={handleLogout} />
         <main className="cd-main">

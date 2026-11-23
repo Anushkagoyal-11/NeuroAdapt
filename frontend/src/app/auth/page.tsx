@@ -15,14 +15,17 @@ import {
   Sparkles,
   Eye,
   EyeOff,
+  Check,
+  CheckCircle2,
+  BookOpen,
+  Mic,
+  Activity,
 } from "lucide-react";
 import Image from "next/image";
 
 type Role = "child" | "clinician" | "admin";
 type Step = "select" | "form";
 type Mode = "login" | "register";
-
-
 
 /* ─────────────────── Logo (horizontal for form) ─────────────────── */
 function FormLogo() {
@@ -41,17 +44,17 @@ function FormLogo() {
   );
 }
 
-
-
 /* ─────────────────── Role Card (Portal Selection) ─────────────────── */
 function RoleCard({
   title,
   description,
+  badge,
   icon,
   onClick,
 }: {
   title: string;
   description: string;
+  badge?: string;
   icon: React.ReactNode;
   onClick: () => void;
 }) {
@@ -59,70 +62,35 @@ function RoleCard({
     <button
       type="button"
       onClick={onClick}
-      className="group relative w-full max-w-[350px] overflow-hidden rounded-[28px] border border-violet-200/70 bg-white/65 p-7 text-left backdrop-blur-xl transition-all duration-500 hover:-translate-y-2 hover:border-violet-300 hover:bg-white/85 hover:shadow-[0_25px_70px_rgba(109,61,245,0.18)] focus:outline-none focus:ring-4 focus:ring-violet-300/30"
+      className="group relative w-full max-w-[360px] overflow-hidden rounded-[28px] border border-violet-200/70 bg-white/75 p-7 text-left backdrop-blur-xl transition-all duration-500 hover:-translate-y-2 hover:border-violet-300 hover:bg-white/95 hover:shadow-[0_25px_70px_rgba(109,61,245,0.18)] focus:outline-none focus:ring-4 focus:ring-violet-300/30"
     >
-      <div className="absolute bottom-0 left-0 right-0 h-[2px] origin-center scale-x-0 bg-gradient-to-r from-violet-400 via-purple-500 to-violet-400 transition-transform duration-500 group-hover:scale-x-100" />
+      <div className="absolute bottom-0 left-0 right-0 h-[3px] origin-center scale-x-0 bg-gradient-to-r from-violet-500 via-purple-500 to-indigo-500 transition-transform duration-500 group-hover:scale-x-100" />
       <div className="absolute -right-16 -top-16 h-40 w-40 rounded-full bg-violet-200/30 blur-3xl opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
+
+      {badge && (
+        <span className="absolute top-5 right-5 inline-flex items-center gap-1 rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-semibold text-violet-700">
+          {badge}
+        </span>
+      )}
+
       <div className="relative">
-        <div className="mb-7 flex justify-center">
-          <div className="relative flex h-[100px] w-[100px] items-center justify-center">
+        <div className="mb-6 flex justify-center">
+          <div className="relative flex h-[90px] w-[90px] items-center justify-center">
             <div className="absolute inset-0 rounded-full bg-violet-100/80 blur-xl transition-all duration-500 group-hover:scale-125 group-hover:bg-violet-200/80" />
-            <div className="relative flex h-[86px] w-[86px] items-center justify-center rounded-full border border-violet-100 bg-gradient-to-br from-white to-violet-50 shadow-[0_10px_30px_rgba(124,58,237,0.10)] transition-transform duration-500 group-hover:scale-105">
+            <div className="relative flex h-[82px] w-[82px] items-center justify-center rounded-full border border-violet-100 bg-gradient-to-br from-white to-violet-50 shadow-[0_10px_30px_rgba(124,58,237,0.10)] transition-transform duration-500 group-hover:scale-105">
               <div className="text-violet-600">{icon}</div>
             </div>
           </div>
         </div>
-        <h2 className="text-center text-[25px] font-bold tracking-[-0.6px] text-[#17102f]">{title}</h2>
-        <p className="mx-auto mt-2 max-w-[270px] text-center text-[15px] leading-6 text-[#8c879b]">{description}</p>
-        <div className="mt-7 flex justify-center">
+        <h2 className="text-center text-[24px] font-bold tracking-[-0.6px] text-[#17102f]">{title}</h2>
+        <p className="mx-auto mt-2 max-w-[280px] text-center text-[14.5px] leading-6 text-[#716b82]">{description}</p>
+        <div className="mt-6 flex justify-center">
           <div className="flex h-11 w-11 items-center justify-center rounded-full border border-violet-200 bg-white text-violet-600 shadow-sm transition-all duration-500 group-hover:border-violet-300 group-hover:bg-violet-600 group-hover:text-white group-hover:shadow-[0_8px_25px_rgba(124,58,237,0.25)]">
             <ArrowRight className="h-5 w-5 transition-transform duration-500 group-hover:translate-x-0.5" />
           </div>
         </div>
       </div>
     </button>
-  );
-}
-
-/* ─────────────────── Background Decoration (for select step) ─────────────────── */
-function BackgroundDecoration() {
-  return (
-    <div className="pointer-events-none fixed inset-0 overflow-hidden">
-      <div className="absolute left-1/2 top-1/2 h-[700px] w-[900px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-violet-200/30 blur-[140px]" />
-      <div className="absolute -right-40 -top-40 h-[500px] w-[500px] rounded-full bg-purple-300/20 blur-[120px]" />
-      <div className="absolute -bottom-48 -left-40 h-[500px] w-[500px] rounded-full bg-violet-300/20 blur-[120px]" />
-
-      <svg className="absolute left-0 top-0 h-[300px] w-[420px] opacity-60" viewBox="0 0 420 300" fill="none">
-        <path d="M40 225 L110 130 L220 60 L350 95" stroke="#BFA6F7" strokeWidth="1" opacity=".35" />
-        <path d="M110 130 L125 225 L220 60" stroke="#C9B4F8" strokeWidth="1" opacity=".3" />
-        <path d="M220 60 L275 145 L350 95" stroke="#C9B4F8" strokeWidth="1" opacity=".3" />
-        <circle cx="40" cy="225" r="5" fill="#9B6EF3" />
-        <circle cx="110" cy="130" r="6" fill="#9B6EF3" />
-        <circle cx="125" cy="225" r="4" fill="#D0B9FA" />
-        <circle cx="220" cy="60" r="6" fill="#9B6EF3" />
-        <circle cx="275" cy="145" r="4" fill="#D0B9FA" />
-        <circle cx="350" cy="95" r="5" fill="#B58AF6" />
-      </svg>
-
-      <svg className="absolute bottom-0 right-0 h-[300px] w-[420px] opacity-60" viewBox="0 0 420 300" fill="none">
-        <path d="M60 235 L145 180 L250 220 L360 125" stroke="#BFA6F7" strokeWidth="1" opacity=".35" />
-        <path d="M145 180 L180 270 L250 220" stroke="#C9B4F8" strokeWidth="1" opacity=".3" />
-        <path d="M250 220 L330 245 L360 125" stroke="#C9B4F8" strokeWidth="1" opacity=".3" />
-        <circle cx="60" cy="235" r="5" fill="#A577F3" />
-        <circle cx="145" cy="180" r="5" fill="#B68AF6" />
-        <circle cx="180" cy="270" r="4" fill="#D0B9FA" />
-        <circle cx="250" cy="220" r="6" fill="#9B6EF3" />
-        <circle cx="330" cy="245" r="4" fill="#D0B9FA" />
-        <circle cx="360" cy="125" r="6" fill="#9B6EF3" />
-      </svg>
-
-      <span className="absolute left-[9%] top-[47%] h-2 w-2 animate-pulse rounded-full bg-violet-300" />
-      <span className="absolute right-[12%] top-[22%] h-2 w-2 animate-pulse rounded-full bg-purple-300 [animation-delay:700ms]" />
-      <span className="absolute bottom-[30%] left-[7%] h-2 w-2 animate-pulse rounded-full bg-violet-300 [animation-delay:1200ms]" />
-      <span className="absolute bottom-[18%] right-[18%] h-2 w-2 animate-pulse rounded-full bg-purple-300 [animation-delay:500ms]" />
-      <span className="absolute left-[4%] top-[55%] h-1.5 w-1.5 rounded-full bg-violet-400 shadow-[0_0_15px_5px_rgba(139,92,246,0.2)]" />
-      <span className="absolute right-[5%] top-[35%] h-1.5 w-1.5 rounded-full bg-violet-400 shadow-[0_0_15px_5px_rgba(139,92,246,0.2)]" />
-    </div>
   );
 }
 
@@ -159,29 +127,19 @@ function AuthContent() {
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [age, setAge] = useState<number | string>(9);
+  const [selectedPathways, setSelectedPathways] = useState<string[]>(["adhd"]);
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [infoMessage, setInfoMessage] = useState("");
 
   const [isLoading, setIsLoading] = useState(false);
-  const [loadingLong, setLoadingLong] = useState(false);
 
-  // Automatically pre-warm backend on page load so it's awake by the time user fills the form
+  // Automatically pre-warm backend health on load
   useEffect(() => {
     const backendUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
     fetch(`${backendUrl}/api/health`, { cache: "no-store" }).catch(() => {});
   }, []);
-
-  // Show cold-start wake-up hint if request takes > 3.5s
-  useEffect(() => {
-    let timer: NodeJS.Timeout;
-    if (isLoading) {
-      timer = setTimeout(() => setLoadingLong(true), 3500);
-    } else {
-      setLoadingLong(false);
-    }
-    return () => clearTimeout(timer);
-  }, [isLoading]);
 
   const selectRole = (selectedRole: Role) => {
     setRole(selectedRole);
@@ -189,7 +147,9 @@ function AuthContent() {
     setPassword("");
     setName("");
     setAge(9);
+    setSelectedPathways(selectedRole === "child" ? ["adhd", "dyslexia"] : ["adhd"]);
     setErrorMessage("");
+    setInfoMessage("");
     setStep("form");
   };
 
@@ -213,14 +173,36 @@ function AuthContent() {
       setPassword("");
       setName("");
       setAge(9);
+      setSelectedPathways(selected === "child" ? ["adhd", "dyslexia"] : ["adhd"]);
       setErrorMessage("");
+      setInfoMessage("");
     }
   }, [searchParams]);
+
+  // Demo account quick-fill
+  const fillDemoAccount = (demoEmail: string, demoRole: Role, pathwaysDesc?: string) => {
+    setRole(demoRole);
+    setEmail(demoEmail);
+    setPassword("password123");
+    setErrorMessage("");
+    setInfoMessage(`Filled credentials for ${demoEmail} (${demoRole.toUpperCase()}${pathwaysDesc ? ` • ${pathwaysDesc}` : ""}). Click Log In.`);
+  };
+
+  const togglePathway = (p: string) => {
+    if (selectedPathways.includes(p)) {
+      if (selectedPathways.length > 1) {
+        setSelectedPathways(selectedPathways.filter((item) => item !== p));
+      }
+    } else {
+      setSelectedPathways([...selectedPathways, p]);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setErrorMessage("");
+    setInfoMessage("");
 
     const backendUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -231,10 +213,11 @@ function AuthContent() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             name: name.trim() || email.split("@")[0],
-            email: email.trim(),
+            email: email.trim().toLowerCase(),
             password: password,
             role: role,
             age: role === "child" ? Number(age) || 8 : undefined,
+            pathways: role === "child" ? selectedPathways : undefined,
           }),
         });
 
@@ -249,6 +232,8 @@ function AuthContent() {
           name: newUser.name,
           email: newUser.email,
           role: newUser.role,
+          age: newUser.age,
+          assigned_pathways: newUser.assigned_pathways || selectedPathways,
         };
 
         localStorage.setItem("neuroadapt_user", JSON.stringify(userObj));
@@ -266,7 +251,7 @@ function AuthContent() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            email: email.trim(),
+            email: email.trim().toLowerCase(),
             password: password,
             role: role,
           }),
@@ -281,9 +266,12 @@ function AuthContent() {
         const userObj = data.user;
 
         localStorage.setItem("neuroadapt_user", JSON.stringify(userObj));
+        if (data.access_token) {
+          localStorage.setItem("neuroadapt_token", data.access_token);
+        }
         setIsLoading(false);
 
-        // Redirect to role portal
+        // Redirect to verified role portal
         if (userObj.role === "child") {
           router.push("/child");
         } else if (userObj.role === "clinician") {
@@ -292,9 +280,9 @@ function AuthContent() {
           router.push("/");
         }
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       setIsLoading(false);
-      setErrorMessage(err.message || "An unexpected error occurred. Please try again.");
+      setErrorMessage(err instanceof Error ? err.message : "An unexpected error occurred. Please try again.");
     }
   };
 
@@ -302,78 +290,58 @@ function AuthContent() {
   if (step === "select") {
     return (
       <main className="relative min-h-screen overflow-hidden bg-[#fbfaff] font-sans text-[#17102f]">
-        <BackgroundDecoration />
-
         <div className="relative z-10 flex min-h-screen items-center justify-center px-5 py-12">
           <section className="flex w-full max-w-[850px] flex-col items-center">
-            <div className="animate-[fadeUp_.7s_ease-out_both]">
-              <CenteredLogo />
-            </div>
+            <CenteredLogo />
 
-            <div className="mt-8 text-center animate-[fadeUp_.7s_.1s_ease-out_both]" style={{ marginBottom: "64px" }}>
-              <h1 className="text-[42px] font-bold tracking-[-1.8px] text-[#17102f] sm:text-[56px]">
+            <div className="mt-8 text-center" style={{ marginBottom: "40px" }}>
+              <h1 className="text-[40px] font-bold tracking-[-1.5px] text-[#17102f] sm:text-[52px]">
                 Welcome to{" "}
-                <span className="bg-gradient-to-r from-violet-600 via-purple-500 to-violet-500 bg-clip-text text-transparent">
+                <span className="bg-gradient-to-r from-violet-600 via-purple-600 to-indigo-600 bg-clip-text text-transparent">
                   NeuroAdapt
                 </span>
               </h1>
 
-              <p className="mt-3 text-[17px] text-[#918ca0]">
-                Choose how you want to continue.
+              <p className="mt-3 text-[16px] text-[#78728a] max-w-[540px] mx-auto">
+                Personalized intervention pathways for ADHD, Dyslexia, and Speech & Language development.
               </p>
 
-              <div className="mx-auto mt-5 h-[2px] w-12 rounded-full bg-gradient-to-r from-violet-400 to-purple-500" />
+              <div className="mx-auto mt-4 h-[2px] w-12 rounded-full bg-gradient-to-r from-violet-400 to-purple-500" />
             </div>
 
-            <div
-              className="flex w-full flex-col items-center justify-center gap-6 sm:flex-row animate-[fadeUp_.8s_.2s_ease-out_both]"
-              style={{ marginTop: "32px", marginBottom: "64px" }}
-            >
+            <div className="flex w-full flex-col items-center justify-center gap-6 sm:flex-row" style={{ marginBottom: "40px" }}>
               <RoleCard
                 title="Child Portal"
-                description="Engaging cognitive training games made for you."
-                icon={<User className="h-11 w-11" strokeWidth={1.5} />}
+                description="Interactive games supporting attention, reading fluency, and speech skills."
+                badge="3 Pathways"
+                icon={<User className="h-10 w-10" strokeWidth={1.6} />}
                 onClick={() => selectRole("child")}
               />
 
               <RoleCard
                 title="Clinician Portal"
-                description="Monitor progress, manage therapy, and support growth."
-                icon={<Stethoscope className="h-11 w-11" strokeWidth={1.5} />}
+                description="Longitudinal telemetry, pathway titration, therapy plans, and clinical reports."
+                badge="Clinical Oversight"
+                icon={<Stethoscope className="h-10 w-10" strokeWidth={1.6} />}
                 onClick={() => selectRole("clinician")}
               />
             </div>
 
-            <div
-              className="flex items-center gap-4 text-[14px] text-[#9a94a9] animate-[fadeUp_.8s_.35s_ease-out_both]"
-              style={{ marginTop: "32px" }}
-            >
-              <span className="flex items-center gap-2">
-                <ShieldCheck className="h-4 w-4 text-violet-500" />
-                Secure
+            <div className="flex flex-wrap items-center justify-center gap-5 text-[13.5px] text-[#8e889e]">
+              <span className="flex items-center gap-1.5">
+                <ShieldCheck className="h-4 w-4 text-violet-600" /> Multi-Pathway Support
               </span>
               <span className="h-1 w-1 rounded-full bg-violet-300" />
-              <span className="flex items-center gap-2">
-                <Lock className="h-4 w-4 text-violet-500" />
-                Private
+              <span className="flex items-center gap-1.5">
+                <Lock className="h-4 w-4 text-violet-600" /> Private & Secure
               </span>
               <span className="h-1 w-1 rounded-full bg-violet-300" />
-              <span className="flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-violet-500" />
-                Guided
+              <span className="flex items-center gap-1.5">
+                <Sparkles className="h-4 w-4 text-violet-600" /> Adaptive Titration
               </span>
             </div>
           </section>
         </div>
-
-        <div className="pointer-events-none fixed bottom-0 left-1/2 h-32 w-[600px] -translate-x-1/2 rounded-full bg-violet-300/10 blur-3xl" />
-
-        <style jsx global>{`
-          @keyframes fadeUp {
-            from { opacity: 0; transform: translateY(18px); }
-            to { opacity: 1; transform: translateY(0); }
-          }
-        `}</style>
       </main>
     );
   }
@@ -385,14 +353,13 @@ function AuthContent() {
       <div className="auth-left-panel">
         <Image
           src="/authBg.png"
-          alt="NeuroAdapt"
+          alt="NeuroAdapt platform illustration"
           fill
           className="object-cover"
           style={{ objectPosition: "25% center" }}
           priority
         />
 
-        {/* Back button overlaid on landscape */}
         <button
           type="button"
           onClick={() => setStep("select")}
@@ -413,14 +380,17 @@ function AuthContent() {
 
           {/* Heading */}
           <div className="auth-form-heading">
+            <div className="inline-flex items-center gap-1.5 rounded-full bg-violet-100/80 px-3 py-1 text-xs font-semibold text-violet-700 mb-2">
+              {role === "child" ? "Child Portal" : role === "clinician" ? "Clinician Portal" : "Admin Portal"}
+            </div>
             <h1>
               {mode === "login" ? "Welcome back" : "Create account"}
             </h1>
             <p>
               {mode === "login" ? (
-                <>Login to continue <span className="auth-purple-text">your journey</span>.</>
+                <>Sign in to continue <span className="auth-purple-text">personalized developmental care</span>.</>
               ) : (
-                <>Sign up to start <span className="auth-purple-text">your journey</span>.</>
+                <>Register to start <span className="auth-purple-text">your intervention journey</span>.</>
               )}
             </p>
           </div>
@@ -431,6 +401,76 @@ function AuthContent() {
               {errorMessage}
             </div>
           )}
+
+          {/* Info Toast */}
+          {infoMessage && (
+            <div className="mb-4 rounded-xl border border-violet-200 bg-violet-50 p-3 text-xs text-violet-700 font-medium flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 text-violet-600 shrink-0" />
+              <span>{infoMessage}</span>
+            </div>
+          )}
+
+          {/* Quick Demo Fill Buttons */}
+          <div className="mb-5 rounded-2xl border border-violet-100 bg-violet-50/60 p-3.5">
+            <div className="text-[11.5px] font-semibold text-violet-900 uppercase tracking-wide mb-2">
+              ⚡ Quick Test Credentials (1-Click Fill):
+            </div>
+            {role === "child" ? (
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => fillDemoAccount("aarav.child@neuroadapt.org", "child", "ADHD + Dyslexia")}
+                  className="rounded-lg border border-violet-200 bg-white px-2.5 py-1.5 text-left text-xs font-medium text-violet-800 hover:bg-violet-100/60 transition"
+                >
+                  <span className="font-semibold block truncate">Aarav Sharma</span>
+                  <span className="text-[10.5px] text-violet-600">ADHD + Dyslexia</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => fillDemoAccount("leo.adhd@neuroadapt.org", "child", "ADHD")}
+                  className="rounded-lg border border-violet-200 bg-white px-2.5 py-1.5 text-left text-xs font-medium text-violet-800 hover:bg-violet-100/60 transition"
+                >
+                  <span className="font-semibold block truncate">Leo Miller</span>
+                  <span className="text-[10.5px] text-violet-600">ADHD Pathway</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => fillDemoAccount("maya.dyslexia@neuroadapt.org", "child", "Dyslexia")}
+                  className="rounded-lg border border-violet-200 bg-white px-2.5 py-1.5 text-left text-xs font-medium text-violet-800 hover:bg-violet-100/60 transition"
+                >
+                  <span className="font-semibold block truncate">Maya Patel</span>
+                  <span className="text-[10.5px] text-violet-600">Dyslexia Pathway</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => fillDemoAccount("sam.speech@neuroadapt.org", "child", "Speech")}
+                  className="rounded-lg border border-violet-200 bg-white px-2.5 py-1.5 text-left text-xs font-medium text-violet-800 hover:bg-violet-100/60 transition"
+                >
+                  <span className="font-semibold block truncate">Samira Khan</span>
+                  <span className="text-[10.5px] text-violet-600">Speech Pathway</span>
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => fillDemoAccount("dr.mehta@neuroadapt.org", "clinician", "Supervising Clinician")}
+                  className="rounded-lg border border-violet-200 bg-white px-2.5 py-2 text-left text-xs font-medium text-violet-800 hover:bg-violet-100/60 transition"
+                >
+                  <span className="font-semibold block truncate">Dr. Rajesh Mehta</span>
+                  <span className="text-[10.5px] text-violet-600">Clinician Lead</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => fillDemoAccount("clinician@neuroadapt.org", "clinician", "Pediatric Specialist")}
+                  className="rounded-lg border border-violet-200 bg-white px-2.5 py-2 text-left text-xs font-medium text-violet-800 hover:bg-violet-100/60 transition"
+                >
+                  <span className="font-semibold block truncate">Dr. Sarah Jenkins</span>
+                  <span className="text-[10.5px] text-violet-600">Pediatric Care</span>
+                </button>
+              </div>
+            )}
+          </div>
 
           {/* Form */}
           <form onSubmit={handleSubmit} className="auth-form">
@@ -466,6 +506,51 @@ function AuthContent() {
                     placeholder="Child age (years, e.g. 9)"
                     className="auth-input"
                   />
+                </div>
+              </div>
+            )}
+
+            {/* Pathway Selection for Child Registration */}
+            {mode === "register" && role === "child" && (
+              <div className="mb-4">
+                <label className="block text-xs font-semibold text-[#544d65] mb-2">
+                  Select Intervention Pathways (Choose one or multiple):
+                </label>
+                <div className="grid grid-cols-1 gap-2">
+                  {[
+                    { id: "adhd", label: "ADHD Pathway", icon: <Activity className="h-3.5 w-3.5 text-purple-600" />, desc: "Focus, working memory & sequencing" },
+                    { id: "dyslexia", label: "Dyslexia Pathway", icon: <BookOpen className="h-3.5 w-3.5 text-blue-600" />, desc: "Letter recognition, phonics & reading" },
+                    { id: "speech", label: "Speech & Language Pathway", icon: <Mic className="h-3.5 w-3.5 text-emerald-600" />, desc: "Vocabulary, sentence building & articulation" },
+                  ].map((p) => {
+                    const active = selectedPathways.includes(p.id);
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => togglePathway(p.id)}
+                        className={`flex items-start gap-2.5 rounded-xl border p-2.5 text-left transition ${
+                          active
+                            ? "border-violet-500 bg-violet-50/80 shadow-sm"
+                            : "border-gray-200 bg-white hover:border-gray-300"
+                        }`}
+                      >
+                        <div
+                          className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+                            active ? "border-violet-600 bg-violet-600 text-white" : "border-gray-300 bg-white"
+                          }`}
+                        >
+                          {active && <Check className="h-3 w-3 stroke-[3]" />}
+                        </div>
+                        <div className="flex-1">
+                          <div className="flex items-center gap-1.5 text-xs font-semibold text-gray-900">
+                            {p.icon}
+                            {p.label}
+                          </div>
+                          <div className="text-[11px] text-gray-500">{p.desc}</div>
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -512,7 +597,7 @@ function AuthContent() {
               </div>
             </div>
 
-            {/* Remember / Forgot */}
+            {/* Remember */}
             {mode === "login" && (
               <div className="auth-remember-row">
                 <label className="auth-checkbox-label">
@@ -529,11 +614,8 @@ function AuthContent() {
                       </svg>
                     )}
                   </span>
-                  Remember me
+                  Remember this device
                 </label>
-                <button type="button" className="auth-forgot-link">
-                  Forgot password?
-                </button>
               </div>
             )}
 
@@ -547,40 +629,23 @@ function AuthContent() {
                 <div className="auth-spinner" />
               ) : (
                 <>
-                  {mode === "login" ? "Log In" : "Sign Up"}
+                  {mode === "login" ? `Sign In to ${role === "child" ? "Child" : "Clinician"} Portal` : "Create Account"}
                   <ArrowRight className="h-4.5 w-4.5" />
                 </>
               )}
             </button>
-
-            {loadingLong && (
-              <div
-                style={{
-                  marginTop: "12px",
-                  padding: "10px 14px",
-                  background: "#F5F3FF",
-                  borderRadius: "10px",
-                  border: "1px solid #DDD6FE",
-                  color: "#6D28D9",
-                  fontSize: "12.5px",
-                  textAlign: "center",
-                  fontWeight: 600,
-                  animation: "pulse 2s infinite",
-                }}
-              >
-                ⚡ Waking up free-tier cloud server (takes a moment on first visit)...
-              </div>
-            )}
           </form>
-
-
 
           {/* Toggle mode */}
           <p className="auth-toggle-text">
             {mode === "login" ? "Don't have an account?" : "Already have an account?"}{" "}
             <button
               type="button"
-              onClick={() => setMode(mode === "login" ? "register" : "login")}
+              onClick={() => {
+                setMode(mode === "login" ? "register" : "login");
+                setErrorMessage("");
+                setInfoMessage("");
+              }}
               className="auth-toggle-link"
             >
               {mode === "login" ? "Sign up" : "Sign in"}

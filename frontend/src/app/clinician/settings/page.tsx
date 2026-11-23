@@ -13,7 +13,7 @@ import {
   Mail,
   Lock,
 } from "lucide-react";
-import { useClinicianContext } from "../layout";
+import { useClinicianContext } from "../ClinicianContext";
 
 export default function ClinicianSettingsPage() {
   const { user } = useClinicianContext();

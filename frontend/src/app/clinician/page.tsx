@@ -21,7 +21,7 @@ import {
   Stethoscope,
   Plus,
 } from "lucide-react";
-import { useClinicianContext } from "./layout";
+import { useClinicianContext } from "./ClinicianContext";
 import VoiceInterviewSummaryCard, { VoiceInterviewRecord } from "./components/VoiceInterviewSummaryCard";
 
 /* ═══════════════════════════════════════════════════════════════════════ */
@@ -75,11 +75,18 @@ interface ChildSummary {
   name: string;
   age: number;
   condition: string;
+  assigned_pathways?: string[];
   total_sessions: number;
   avg_accuracy: number;
   last_active: string | null;
   status: "On Track" | "Needs Review" | "Active" | "New";
 }
+
+const PATHWAY_CONFIG: Record<string, { label: string; color: string; bg: string; border: string }> = {
+  adhd: { label: "ADHD", color: "#7C3AED", bg: "#F5F0FF", border: "#DDD6FE" },
+  dyslexia: { label: "Dyslexia", color: "#2563EB", bg: "#EFF6FF", border: "#BFDBFE" },
+  speech: { label: "Speech & Lang", color: "#059669", bg: "#ECFDF5", border: "#A7F3D0" },
+};
 
 const DOMAIN_CONFIG: Record<string, { label: string; color: string; bgGradient: string; icon: React.ReactNode }> = {
   attention: {
@@ -253,6 +260,75 @@ export default function ClinicianDashboard() {
         </div>
       </div>
 
+      {/* Cohort Pathway Distribution */}
+      <div
+        style={{
+          background: "white",
+          border: "1px solid #F0ECF9",
+          borderRadius: "18px",
+          padding: "18px 24px",
+          marginBottom: "24px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+          gap: "16px",
+        }}
+      >
+        <div>
+          <span style={{ fontSize: "12px", color: "#7C3AED", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px" }}>
+            Multi-Pathway Cohort Distribution
+          </span>
+          <p style={{ fontSize: "13px", color: "#6B6580", margin: "2px 0 0" }}>
+            Children with overlapping developmental profiles receive tailored activities from all assigned pathways.
+          </p>
+        </div>
+        <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+          {[
+            {
+              id: "adhd",
+              label: "ADHD Pathway",
+              count: patients.filter((p) => (p.assigned_pathways || ["adhd"]).includes("adhd")).length,
+              color: "#7C3AED",
+              bg: "#F5F0FF",
+              border: "#DDD6FE",
+            },
+            {
+              id: "dyslexia",
+              label: "Dyslexia Pathway",
+              count: patients.filter((p) => (p.assigned_pathways || []).includes("dyslexia")).length,
+              color: "#2563EB",
+              bg: "#EFF6FF",
+              border: "#BFDBFE",
+            },
+            {
+              id: "speech",
+              label: "Speech & Language",
+              count: patients.filter((p) => (p.assigned_pathways || []).includes("speech")).length,
+              color: "#059669",
+              bg: "#ECFDF5",
+              border: "#A7F3D0",
+            },
+          ].map((item) => (
+            <div
+              key={item.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                padding: "8px 14px",
+                borderRadius: "12px",
+                background: item.bg,
+                border: `1px solid ${item.border}`,
+              }}
+            >
+              <span style={{ fontSize: "16px", fontWeight: 800, color: item.color }}>{item.count}</span>
+              <span style={{ fontSize: "12px", fontWeight: 600, color: item.color }}>{item.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
       {/* Clinical Alerts Section */}
       {data.clinical_alerts.length > 0 && (
         <div className="cl-alerts-section">
@@ -392,7 +468,29 @@ export default function ClinicianDashboard() {
                       </td>
                       <td>
                         <div style={{ fontWeight: 500, color: "#1A1035" }}>{patient.age} yrs</div>
-                        <div style={{ fontSize: "11.5px", color: "#9A94A9" }}>{patient.condition}</div>
+                        <div style={{ fontSize: "11px", color: "#9A94A9", marginBottom: "4px" }}>{patient.condition}</div>
+                        <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+                          {(patient.assigned_pathways || ["adhd"]).map((pw) => {
+                            const pConf = PATHWAY_CONFIG[pw] || PATHWAY_CONFIG.adhd;
+                            return (
+                              <span
+                                key={pw}
+                                style={{
+                                  fontSize: "9.5px",
+                                  fontWeight: 700,
+                                  padding: "1px 5px",
+                                  borderRadius: "4px",
+                                  background: pConf.bg,
+                                  color: pConf.color,
+                                  border: `1px solid ${pConf.border}`,
+                                  textTransform: "uppercase",
+                                }}
+                              >
+                                {pConf.label}
+                              </span>
+                            );
+                          })}
+                        </div>
                       </td>
                       <td style={{ fontWeight: 600 }}>{patient.total_sessions}</td>
                       <td>

@@ -13,13 +13,15 @@ import {
   CheckCircle2,
   Sliders,
   Sparkles,
+  Layers,
 } from "lucide-react";
-import { useClinicianContext } from "../layout";
+import { useClinicianContext } from "../ClinicianContext";
 
 interface TherapyPlanItem {
   id: number;
   child_id: number;
   child_name: string;
+  target_pathways?: string[];
   target_domains: string[];
   min_difficulty: number;
   max_difficulty: number;
@@ -32,6 +34,12 @@ interface PatientOption {
   name: string;
 }
 
+const PATHWAY_CONFIG: Record<string, { label: string; color: string; bg: string; border: string }> = {
+  adhd: { label: "ADHD", color: "#7C3AED", bg: "#F5F0FF", border: "#DDD6FE" },
+  dyslexia: { label: "Dyslexia", color: "#2563EB", bg: "#EFF6FF", border: "#BFDBFE" },
+  speech: { label: "Speech & Lang", color: "#059669", bg: "#ECFDF5", border: "#A7F3D0" },
+};
+
 export default function TherapyPlansPage() {
   const { user, apiUrl, refreshTrigger, triggerRefresh } = useClinicianContext();
   const [plans, setPlans] = useState<TherapyPlanItem[]>([]);
@@ -41,7 +49,8 @@ export default function TherapyPlansPage() {
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedChildId, setSelectedChildId] = useState<number | null>(null);
-  const [selectedDomains, setSelectedDomains] = useState<string[]>(["attention", "memory", "reasoning"]);
+  const [selectedPathways, setSelectedPathways] = useState<string[]>(["adhd"]);
+  const [selectedDomains, setSelectedDomains] = useState<string[]>(["attention", "working_memory", "sequencing"]);
   const [minDiff, setMinDiff] = useState(1);
   const [maxDiff, setMaxDiff] = useState(5);
   const [notes, setNotes] = useState("3 sessions per week, 15 minutes each");
@@ -85,6 +94,7 @@ export default function TherapyPlansPage() {
         body: JSON.stringify({
           child_id: selectedChildId,
           clinician_id: user?.id,
+          target_pathways: selectedPathways,
           target_domains: selectedDomains,
           min_difficulty: Number(minDiff),
           max_difficulty: Number(maxDiff),
@@ -100,6 +110,16 @@ export default function TherapyPlansPage() {
       console.error(err);
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const togglePathway = (pw: string) => {
+    if (selectedPathways.includes(pw)) {
+      if (selectedPathways.length > 1) {
+        setSelectedPathways(selectedPathways.filter((p) => p !== pw));
+      }
+    } else {
+      setSelectedPathways([...selectedPathways, pw]);
     }
   };
 
@@ -128,7 +148,7 @@ export default function TherapyPlansPage() {
         <div>
           <h1 className="cl-topbar-title" style={{ fontSize: "26px" }}>Therapy Plans & Protocols</h1>
           <p className="cl-section-subtitle">
-            Define cognitive training domains and enforce therapeutic boundaries for AI difficulty adaptation (PRD Section 11)
+            Configure multi-pathway cognitive training domains and therapeutic safety corridor boundaries
           </p>
         </div>
         <button onClick={() => setIsModalOpen(true)} className="cl-topbar-action-btn">
@@ -152,10 +172,10 @@ export default function TherapyPlansPage() {
         <Shield className="h-7 w-7 text-violet-600" style={{ flexShrink: 0 }} />
         <div>
           <h4 style={{ fontSize: "14px", fontWeight: 700, color: "#1A1035", margin: "0 0 4px" }}>
-            Therapeutic Safety Corridor Principle
+            Therapeutic Safety Corridor & Multi-Pathway Alignment
           </h4>
           <p style={{ fontSize: "13px", color: "#6B6580", margin: 0, lineHeight: 1.5 }}>
-            AI personalization dynamically modulates exercise complexity strictly within the Min & Max difficulty boundaries set by you. The AI cannot exceed your clinical limits.
+            Each therapy plan assigns one or more intervention pathways (ADHD, Dyslexia, Speech & Language) and caps adaptive exercise difficulty within clinical min/max safety limits.
           </p>
         </div>
       </div>
@@ -167,7 +187,7 @@ export default function TherapyPlansPage() {
             <ClipboardList className="h-12 w-12 text-violet-300" style={{ margin: "0 auto 12px" }} />
             <h3 style={{ fontSize: "16px", color: "#1A1035", fontWeight: 700, margin: "0 0 6px" }}>No Therapy Plans</h3>
             <p style={{ fontSize: "13.5px", maxWidth: "360px", margin: "0 auto 18px" }}>
-              Configure structured cognitive protocols and difficulty limits for your patients.
+              Configure structured multi-pathway cognitive protocols and difficulty limits for your patients.
             </p>
             <button onClick={() => setIsModalOpen(true)} className="cl-topbar-action-btn">
               <Plus className="h-4 w-4" /> Create Therapy Plan
@@ -178,6 +198,7 @@ export default function TherapyPlansPage() {
             <thead>
               <tr>
                 <th>Patient</th>
+                <th>Target Pathways</th>
                 <th>Target Domains</th>
                 <th>Difficulty Corridor</th>
                 <th>Protocol Notes</th>
@@ -198,8 +219,32 @@ export default function TherapyPlansPage() {
                     </div>
                   </td>
                   <td>
+                    <div style={{ display: "flex", gap: "5px", flexWrap: "wrap" }}>
+                      {(plan.target_pathways || ["adhd"]).map((pw) => {
+                        const conf = PATHWAY_CONFIG[pw] || PATHWAY_CONFIG.adhd;
+                        return (
+                          <span
+                            key={pw}
+                            style={{
+                              background: conf.bg,
+                              color: conf.color,
+                              border: `1px solid ${conf.border}`,
+                              padding: "2px 7px",
+                              borderRadius: "6px",
+                              fontSize: "11px",
+                              fontWeight: 700,
+                              textTransform: "uppercase",
+                            }}
+                          >
+                            {conf.label}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </td>
+                  <td>
                     <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                      {plan.target_domains.map((d) => (
+                      {(plan.target_domains || []).map((d) => (
                         <span
                           key={d}
                           style={{
@@ -222,7 +267,7 @@ export default function TherapyPlansPage() {
                       Level {plan.min_difficulty} – Level {plan.max_difficulty}
                     </span>
                   </td>
-                  <td style={{ color: "#6B6580", fontSize: "12.5px", maxWidth: "260px" }}>
+                  <td style={{ color: "#6B6580", fontSize: "12.5px", maxWidth: "240px" }}>
                     {plan.schedule_notes || "Standard home retraining schedule"}
                   </td>
                   <td style={{ color: "#9A94A9", fontSize: "12px" }}>
@@ -271,31 +316,81 @@ export default function TherapyPlansPage() {
                 )}
               </div>
 
+              {/* Target Pathways Multi-Select */}
               <div className="cl-form-group">
-                <label className="cl-form-label">Target Cognitive Domains *</label>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-                  {["attention", "memory", "reasoning", "problem_solving"].map((d) => {
-                    const isSelected = selectedDomains.includes(d);
+                <label className="cl-form-label">Target Support Pathways * (Multi-Select)</label>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "8px" }}>
+                  {[
+                    { id: "adhd", label: "ADHD", color: "#7C3AED", bg: "#F5F0FF", border: "#DDD6FE" },
+                    { id: "dyslexia", label: "Dyslexia", color: "#2563EB", bg: "#EFF6FF", border: "#BFDBFE" },
+                    { id: "speech", label: "Speech & Lang", color: "#059669", bg: "#ECFDF5", border: "#A7F3D0" },
+                  ].map((pw) => {
+                    const isSelected = selectedPathways.includes(pw.id);
                     return (
                       <button
                         type="button"
-                        key={d}
-                        onClick={() => toggleDomain(d)}
+                        key={pw.id}
+                        onClick={() => togglePathway(pw.id)}
                         style={{
                           padding: "10px",
+                          borderRadius: "10px",
+                          border: "1.5px solid",
+                          borderColor: isSelected ? pw.color : "#E8E2F5",
+                          background: isSelected ? pw.bg : "white",
+                          color: isSelected ? pw.color : "#6B6580",
+                          fontWeight: 700,
+                          fontSize: "12.5px",
+                          cursor: "pointer",
+                          textAlign: "center",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: "4px",
+                        }}
+                      >
+                        {isSelected ? "✓ " : ""}{pw.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <span style={{ fontSize: "11.5px", color: "#77738A", marginTop: "4px", display: "block" }}>
+                  Support overlapping needs (e.g. ADHD + Dyslexia). The child will receive exercises from all selected pathways.
+                </span>
+              </div>
+
+              <div className="cl-form-group">
+                <label className="cl-form-label">Target Cognitive Domains *</label>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                  {[
+                    { id: "attention", label: "Attention" },
+                    { id: "working_memory", label: "Working Memory" },
+                    { id: "sequencing", label: "Sequencing" },
+                    { id: "letter_recognition", label: "Letter Recognition" },
+                    { id: "phonological_awareness", label: "Phonological Awareness" },
+                    { id: "vocabulary", label: "Vocabulary" },
+                    { id: "sentence_construction", label: "Sentence Construction" },
+                    { id: "speech_sound", label: "Speech Sound" },
+                  ].map((d) => {
+                    const isSelected = selectedDomains.includes(d.id);
+                    return (
+                      <button
+                        type="button"
+                        key={d.id}
+                        onClick={() => toggleDomain(d.id)}
+                        style={{
+                          padding: "8px 10px",
                           borderRadius: "10px",
                           border: "1.5px solid",
                           borderColor: isSelected ? "#7C3AED" : "#E8E2F5",
                           background: isSelected ? "#F5F0FF" : "white",
                           color: isSelected ? "#7C3AED" : "#6B6580",
                           fontWeight: 600,
-                          fontSize: "13px",
+                          fontSize: "12px",
                           cursor: "pointer",
-                          textTransform: "capitalize",
                           textAlign: "center",
                         }}
                       >
-                        {isSelected ? "✓ " : ""}{d.replace(/_/g, " ")}
+                        {isSelected ? "✓ " : ""}{d.label}
                       </button>
                     );
                   })}
@@ -351,7 +446,7 @@ export default function TherapyPlansPage() {
       )}
 
       <footer style={{ textAlign: "center", padding: "32px 0 12px", fontSize: "12.5px", color: "#B0ABBD" }}>
-        NeuroAdapt Therapy Plan Engine • Version 1.0
+        NeuroAdapt Therapy Plan Engine • Multi-Pathway Intervention Corridors
       </footer>
     </>
   );
