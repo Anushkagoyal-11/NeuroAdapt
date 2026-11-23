@@ -1,188 +1,213 @@
-# 🧠 NeuroAdapt — AI-Powered Pediatric Tele-Rehabilitation Platform
-> **Clinician-Guided Cognitive Rehabilitation with Real-Time Adaptive Difficulty, Generative AI Insights, and Speech Assessment**
+# 🧠 NeuroAdapt — AI-Assisted Developmental Support & Cognitive Rehabilitation
+
+> **A personalized pediatric support and progress-monitoring platform offering specialized intervention pathways for children with ADHD, Dyslexia, and Speech & Language difficulties.**
 
 [![Next.js](https://img.shields.io/badge/Next.js-16.3-black?logo=next.js)](https://nextjs.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688?logo=fastapi)](https://fastapi.tiangolo.com/)
-[![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-3ECF8E?logo=supabase)](https://supabase.com/)
-[![Mistral AI](https://img.shields.io/badge/Mistral_AI-Large-FF7000?logo=mistral)](https://mistral.ai/)
+[![SQLite / PostgreSQL](https://img.shields.io/badge/Database-SQLite%20%7C%20PostgreSQL-3ECF8E?logo=sqlite)](https://sqlite.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-3178C6?logo=typescript)](https://www.typescriptlang.org/)
 [![Python](https://img.shields.io/badge/Python-3.9+-3776AB?logo=python)](https://python.org/)
+[![Vercel Ready](https://img.shields.io/badge/Vercel-Frontend%20Ready-black?logo=vercel)](https://vercel.com/)
+
+---
+
+> [!NOTE]
+> **Clinical Disclaimer**: NeuroAdapt is an assistive developmental support and progress-monitoring platform for children, clinicians, and authorized caregivers. **It is NOT a diagnostic tool** and does not formulate autonomous medical diagnoses or claim to cure any condition.
 
 ---
 
 ## 📌 Executive Summary
 
-**NeuroAdapt** is an end-to-end pediatric tele-rehabilitation platform designed for children recovering from neurological conditions, ADHD, traumatic brain injuries, and cognitive delays. It bridges the gap between clinical oversight and home therapy through:
+**NeuroAdapt** bridges clinical oversight and engaging home practice through three specialized developmental pathways and multi-pathway personalization:
 
-1. **Gamified Cognitive Retraining Exercises** across 4 clinical domains (Attention, Memory, Reasoning, Problem Solving).
-2. **AI Voice Cognitive Interview**: An adaptive 60–90 second conversational assessment testing verbal recall, auditory vigilance, and reasoning.
-3. **Clinician Telemetry Dashboard**: Real-time longitudinal session logging, accuracy corridors, cohort analytics, and dynamic PDF progress report downloads.
-4. **Mistral AI Clinical Insights & Decision Support**: Automatic generation of clinical observations, fatigue detection, and therapy titration recommendations.
-5. **Direct Parent Telegram Dispatcher**: 1-click AI-drafted weekly progress messages sent directly to parents' phones.
+1. **3 Specialized Intervention Pathways**:
+   - 🎯 **ADHD Pathway**: Focus, working memory, organization, sequencing, and cognitive flexibility.
+   - 📖 **Dyslexia Pathway**: Letter orientation recognition (b/d/p/q), phonological awareness, sight word fluency, phoneme spelling, and reading comprehension.
+   - 🗣️ **Speech & Language Pathway**: Expressive vocabulary, grammatical sentence construction, auditory comprehension, and phoneme speech sound practice.
+2. **Multi-Pathway Personalization**: Children with overlapping profiles (e.g. ADHD + Dyslexia) receive personalized activities and unified progress monitoring across all assigned pathways simultaneously.
+3. **Interactive Hands-On Activities**: Real interactive games with instructions, tactile controls, real-time scoring, accuracy percentage, and reaction latency telemetry.
+4. **Clinician Telemetry & Safety Corridors**: Longitudinal patient monitoring, prescription assignments, and strict Min/Max difficulty limits that prevent over-challenging or frustration.
+5. **AI Clinical Decision Support**: Telemetry summarization, cognitive fatigue detection, AI voice interviews, parent progress dispatch, and downloadable clinical PDF reports.
 
 ---
 
-## 🏗️ System Architecture
+## 🧭 The Three Specialized Pathways
 
 ```
-                      ┌────────────────────────────────────────────────────────┐
-                      │                    CLIENT LAYER                        │
-                      │  Next.js 16 (Turbopack) · React 19 · TypeScript        │
-                      ├──────────────────────────┬─────────────────────────────┤
-                      │   👶 CHILD / PATIENT     │    👨‍⚕️ CLINICIAN PORTAL     │
-                      │  • Adaptive Games        │  • Longitudinal Telemetry   │
-                      │  • Voice Interview (TTS) │  • Mistral AI Insights      │
-                      │  • Mic Spectrum + ASR    │  • Telegram Parent Dispatch │
-                      │  • XP / Level Engine     │  • Downloadable Clinical PDF│
-                      └─────────────┬────────────┴─────────────┬───────────────┘
-                                    │ HTTP REST / JSON         │ HTTP REST / Audio Stream
-                                    ▼                          ▼
-                      ┌────────────────────────────────────────────────────────┐
-                      │                   BACKEND API LAYER                    │
-                      │          FastAPI (Python) · Asynchronous Uvicorn       │
-                      ├────────────────────────────────────────────────────────┤
-                      │ • Auth & Role-Based Access Control (RBAC)              │
-                      │ • Adaptive Cognitive Titration Engine                  │
-                      │ • Mistral AI Inference Service (`mistral-large-latest`) │
-                      │ • Neural Audio Streaming Pipeline (gTTS MP3 Stream)    │
-                      │ • Dynamic Clinical PDF Generator (ReportLab)           │
-                      │ • Telegram Bot Dispatch Integration                    │
-                      │ • In-Memory LRU Caching & SQLAlchemy Connection Pool   │
-                      └────────────────────────────┬───────────────────────────┘
+                                 ┌──────────────────────────────────┐
+                                 │   NeuroAdapt Unified Platform    │
+                                 └─────────────────┬────────────────┘
+                                                   │
+                ┌──────────────────────────────────┼──────────────────────────────────┐
+                │                                  │                                  │
+                ▼                                  ▼                                  ▼
+      ┌──────────────────┐               ┌──────────────────┐               ┌──────────────────┐
+      │   ADHD Pathway   │               │ Dyslexia Pathway │               │  Speech Pathway  │
+      └────────┬─────────┘               └────────┬─────────┘               └────────┬─────────┘
+               │                                  │                                  │
+    • Focus Matrix (Attention)         • Letter Detective (b/d/p/q)        • Picture Word Explorer
+    • Memory Card Flip (Memory)        • Phonics Sound Blend (Rhyme)       • Sentence Builder (Grammar)
+    • Sequencer (Organization)         • Sight Word Sprint (Fluency)       • Auditory Listening Quest
+    • Rule Switcher (Flexibility)      • Word Builder Scramble             • Sound Articulator (TTS)
+               │                                  │                                  │
+               └──────────────────────────────────┼──────────────────────────────────┘
                                                    │
                                                    ▼
-                      ┌────────────────────────────────────────────────────────┐
-                      │                   PERSISTENCE LAYER                    │
-                      │              Supabase Managed PostgreSQL               │
-                      └────────────────────────────────────────────────────────┘
+                         ┌──────────────────────────────────────────────────┐
+                         │   Multi-Pathway Personalization Engine           │
+                         │   • Overlapping assignments (e.g. ADHD+Dyslexia) │
+                         │   • Clinician safety corridor (Min/Max bound)    │
+                         │   • Telemetry: accuracy, latency, score, errors  │
+                         └──────────────────────────────────────────────────┘
 ```
 
----
+### 1. 🎯 ADHD Pathway
+* **Target Skills**: Sustained visual attention, selective focus, working memory span, pattern sequencing, and cognitive set-shifting.
+* **Featured Interactive Exercises**:
+  * **Focus Matrix**: Rapid visual search and target discrimination among distractors with millisecond latency logging.
+  * **Card Memory Flip**: Paired spatial-visual memory matching.
+  * **Step & Number Sequencer**: Numerical and sequential order training.
+  * **Rule Switcher**: Cognitive flexibility task requiring rapid shifts between sorting rules (color vs. shape).
 
-## 🤖 AI, Machine Learning & Algorithmic Engines
+### 2. 📖 Dyslexia Pathway
+* **Target Skills**: Orthographic discrimination, sound-letter correspondence, phonological rhyming, sight word recognition, spelling, and reading comprehension.
+* **Featured Interactive Exercises**:
+  * **Letter Detective**: Visual orientation discrimination targeting frequently confused mirror glyphs (**b**, **d**, **p**, **q**).
+  * **Phonics Sound Blend**: Rhyming identification and phoneme-sound blending.
+  * **Sight Word Sprint**: High-frequency word flash recognition.
+  * **Word Builder Scramble**: Phoneme tile sequencing and spelling.
+  * **Story Quest**: Age-appropriate micro-stories with reading comprehension checks.
 
-### 1. Large Language Model (Generative AI & Semantic Reasoning)
-* **Model**: Mistral Large (`mistral-large-latest` via Mistral API)
-* **Components**:
-  * **Clinical Diagnostic Inference**: Ingests multi-session telemetry vectors (accuracy %, response latency $\Delta$, error distribution) and generates structured qualitative clinical observations, cognitive endurance assessments, and titration suggestions.
-  * **Automated Parent Communication**: Translates complex neurological telemetry into empathetic, encouraging, emoji-rich progress updates for parents via Telegram.
-
-### 2. Speech Recognition & Acoustic ML (ASR / Audio AI)
-* **Engine**: Deep Acoustic & Hidden Markov / Neural ASR Models via `SpeechRecognition` Python library.
-* **Pipeline**:
-  * Captures raw 16kHz mono PCM WAV audio buffers from the child's microphone.
-  * Runs acoustic decoding to convert child phonemes $\rightarrow$ text tokens.
-
-### 3. Natural Language Processing (NLP) & Token Matching
-* **Token Normalization**: Lowercases, removes punctuation, handles number words (`"seven"` $\rightarrow$ `"7"`, `"two"` $\rightarrow$ `"2"`).
-* **Stemming & Fuzzy Token Intersect**: Computes child verbal memory recall score against ground-truth item sets even with natural conversational filler words.
-
-### 4. Adaptive Cognitive Titration Algorithm (Reinforcement / Heuristic Policy)
-* **Mathematical Function**:
-  $$\text{Next Level} = f(\text{Accuracy}, \Delta \text{Latency}, \text{Error Frequency}, [\text{Min}_{\text{Diff}}, \text{Max}_{\text{Diff}}])$$
-  * $\text{Accuracy} \ge 80\%$ and $\text{Latency} \le \text{Baseline}$: Promotes difficulty ($+1$).
-  * $\text{Accuracy} < 60\%$ or Fatigue detected: Lowers difficulty ($-1$) to prevent frustration.
-  * Bounded by the **Clinician Safety Corridor** (prescribed by supervising clinician).
+### 3. 🗣️ Speech & Language Pathway
+* **Target Skills**: Expressive vocabulary, semantic categorization, sentence syntax/grammar, receptive auditory processing, and speech articulation.
+* **Featured Interactive Exercises**:
+  * **Picture Word Explorer**: Visual object naming and semantic category classification.
+  * **Sentence Builder**: Word-tile arrangement to form grammatically coherent sentences.
+  * **Auditory Listening Quest**: Auditory prompt comprehension and task following.
+  * **Speech Sound Articulator**: Model phoneme repetition with Text-to-Speech (TTS) audio models and microphone practice.
 
 ---
 
-## 💻 Technology Stack
+## 👥 Demo Test Accounts
 
-| Layer | Technology | Key Capabilities |
+The platform includes pre-seeded demo accounts for testing child and clinician roles. All accounts use password: `password123`.
+
+| Role | Name | Email | Password | Assigned Pathways |
+| :--- | :--- | :--- | :--- | :--- |
+| **Child** | Aarav Sharma | `aarav.child@neuroadapt.org` | `password123` | **ADHD + Dyslexia** (Multi-Pathway) |
+| **Child** | Leo Miller | `leo.adhd@neuroadapt.org` | `password123` | **ADHD** |
+| **Child** | Maya Patel | `maya.dyslexia@neuroadapt.org` | `password123` | **Dyslexia** |
+| **Child** | Samira Khan | `sam.speech@neuroadapt.org` | `password123` | **Speech & Language** |
+| **Child** | Demo Child | `child@neuroadapt.org` | `password123` | **ADHD + Dyslexia + Speech** |
+| **Clinician** | Dr. Rajesh Mehta | `dr.mehta@neuroadapt.org` | `password123` | Supervising Clinician |
+| **Clinician** | Dr. Sarah Jenkins | `clinician@neuroadapt.org` | `password123` | Supervising Clinician |
+| **Admin** | Rehab Center Admin | `admin@neuroadapt.org` | `password123` | Platform Administrator |
+
+> *Tip: The `/auth` page includes 1-click test buttons that automatically populate credentials for each demo persona.*
+
+---
+
+## 🌐 Deploying to Vercel (Frontend)
+
+NeuroAdapt is structured as a monorepo containing `frontend/` (Next.js) and `backend/` (FastAPI). When deploying the frontend to Vercel:
+
+### 1. In Vercel Project Setup:
+1. In the **"Configure Project"** screen, locate **Root Directory** and click **Edit**.
+2. Set the root directory to:
+   ```text
+   frontend
+   ```
+3. Click **Continue** / **Save**.
+
+### 2. Build & Development Settings (Auto-Detected):
+- **Framework Preset**: `Next.js`
+- **Build Command**: `next build --webpack` *(or leave default `npm run build`)*
+- **Output Directory**: `.next`
+- **Install Command**: `npm install`
+
+### 3. Environment Variables:
+Under **Environment Variables** in Vercel, add:
+
+| Key | Value | Description |
 | :--- | :--- | :--- |
-| **Frontend Framework** | **Next.js 16 (App Router)** | Server Components, Turbopack, dynamic routing (`/child`, `/clinician/patients/[id]`). |
-| **UI Library** | **React 19 + TypeScript** | Strict type safety, real-time reactive state hooks (`useContext`, `useRef`, `useMemo`). |
-| **Styling** | **Custom CSS Tokens + Tailwind** | HSL color tokens, dark/light themes, high contrast accessibility, fluid animations. |
-| **Audio Processing** | **HTML5 Web Audio API + gTTS** | Real-time audio spectrum frequency visualizer, MP3 streaming for universal browser playback (including Brave Shields). |
-| **Backend Framework** | **FastAPI (Python 3.9+)** | High-throughput asynchronous REST API, automatic OpenAPI/Swagger docs. |
-| **Database ORM** | **SQLAlchemy** | Connection pooling (`pool_size=15`, `pool_recycle=300`, `pool_pre_ping=True`). |
-| **Database** | **Supabase PostgreSQL** | Cloud relational database storing users, sessions, performance metrics, and plans. |
-| **Reporting** | **ReportLab (Python)** | Generates clinical PDF reports with charts, branding, and recommendations. |
-| **External Messaging** | **Telegram Bot API** | Direct real-time messaging to parents' phones. |
+| `NEXT_PUBLIC_API_URL` | `https://your-backend-api.com` | URL of your deployed FastAPI backend *(or `http://localhost:8000` for local dev)* |
+
+### 4. Updating an Existing Vercel Project:
+If your project is already connected on Vercel:
+1. Go to **Project Settings** → **General**.
+2. Scroll to **Root Directory**, click **Edit**, type `frontend`, and click **Save**.
+3. Go to **Deployments** and click **Redeploy**.
 
 ---
 
-## 🗄️ Database Schema Architecture
-
-The database consists of **9 relational tables** connected through Foreign Keys:
-
-1. **`users`**: Clinicians and children accounts with hashed passwords (`bcrypt`) and roles (`child`, `clinician`, `admin`).
-2. **`children`**: Child demographics (name, age, condition, baseline score, `clinician_id`, `caregiver_id`).
-3. **`exercises`**: Cognitive battery registry across 4 domains (`attention`, `memory`, `reasoning`, `problem_solving`) with difficulty configurations.
-4. **`sessions`**: Log of each exercise or voice session completed (timestamps, duration).
-5. **`performance`**: Fine-grained telemetry (score, accuracy %, reaction latency in ms, error count, difficulty level).
-6. **`therapy_plans`**: Clinician prescriptions (target cognitive domains, min/max difficulty corridor, schedule notes).
-7. **`assignments`**: Specific exercise assignments created by the doctor for the child.
-8. **`notifications`**: System notifications and parent dispatch logs.
-9. **`voice_interviews`**: Full logs of the 60–90s adaptive voice interviews (domain scores, latency $\Delta$, Mistral observation, full dialogue transcript JSON).
-
----
-
-## ⚡ Performance Engineering Highlights
-
-1. **Elimination of $N+1$ Database Queries**: All dashboard metrics, patient lists, and session logs use single joined SQL queries (`join(Performance).join(Exercise)`), avoiding repeated network roundtrips.
-2. **In-Memory Dynamic Caching (`backend/app/cache.py`)**: 4-second TTL thread-safe cache reducing repeat query response times from **1480ms down to 3.5ms** (~400x speedup).
-3. **Cross-Browser Audio Streaming**: Uses backend MP3 synthesis streamed over HTTP (`GET /api/voice/tts`) rather than `window.speechSynthesis`, guaranteeing playback in Brave, Chrome, Safari, macOS, and iOS without permission blocks.
-4. **GPU-Accelerated Rendering**: Landing page particle density is throttled to lock 60–120 FPS frame rates without CPU bottlenecks.
-
----
-
-## 🚀 Quick Start & Installation
+## 🚀 Local Development Setup
 
 ### 1. Prerequisites
 - **Node.js**: v18.17+
 - **Python**: v3.9+
-- **PostgreSQL / Supabase Account**
-- **Mistral AI API Key**
-- **Telegram Bot Token** (Optional for parent dispatch)
+- **Git**
 
-### 2. Backend Setup
+### 2. Backend Setup (FastAPI)
 ```bash
+# Navigate to backend directory
 cd backend
+
+# Create and activate virtual environment
 python3 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
 pip install -r requirements.txt
 
-# Configure .env
-cp .env.example .env
-# Edit DATABASE_URL, MISTRAL_API_KEY, TELEGRAM_BOT_TOKEN in .env
-
-# Run FastAPI Server
-python3 -m uvicorn app.main:app --reload --port 8000
+# Start backend server (auto-seeds database on first run)
+uvicorn app.main:app --reload --port 8000
 ```
+*Backend API docs will be available at:* [http://localhost:8000/docs](http://localhost:8000/docs)
 
-### 3. Frontend Setup
+### 3. Frontend Setup (Next.js)
 ```bash
+# In a separate terminal, navigate to frontend
 cd frontend
+
+# Install dependencies
 npm install
 
-# Run Next.js Development Server
+# Start Next.js development server
 npm run dev
 ```
+*Frontend will be running at:* [http://localhost:3000](http://localhost:3000)
 
-Open [http://localhost:3000](http://localhost:3000) in your browser:
-* **Child Portal**: [http://localhost:3000/child](http://localhost:3000/child)
-* **Clinician Portal**: [http://localhost:3000/clinician](http://localhost:3000/clinician)
-* **API Documentation**: [http://localhost:8000/docs](http://localhost:8000/docs)
+- **Sign In / Portal Selector**: [http://localhost:3000/auth](http://localhost:3000/auth)
+- **Child Dashboard**: [http://localhost:3000/child](http://localhost:3000/child)
+- **Clinician Dashboard**: [http://localhost:3000/clinician](http://localhost:3000/clinician)
 
-
-
-https://neuro-adapt-five.vercel.app/auth?role=child
 ---
 
-## 👥 Roles & Portals
+## 🧪 Testing & Verification
 
-### 👶 Child Portal (`/child`)
-- Interactive retraining games (Focus Matrix, Memory Match, Speed Reflex, Logic Deductions).
-- Voice Memory Challenge and 60–90s Adaptive Voice Interview.
-- XP progression, level milestones, streak tracking, and customizable visual accessibility themes (Dark Mode, high contrast, scalable font sizing).
+NeuroAdapt includes a comprehensive 10-point automated end-to-end integration test suite verifying authentication, multi-pathway aggregation, single-pathway isolation, session telemetry, and clinician management:
 
-### 👨‍⚕️ Clinician Portal (`/clinician`)
-- Cohort patient monitoring matrix and individual patient charts (`/clinician/patients/[id]`).
-- Real-time AI Voice Cognitive Interview analysis cards with transcript viewer.
-- Therapy boundary customization (Min/Max difficulty corridor, target domain selection).
-- 1-Click Mistral AI Parent Telegram progress dispatcher.
-- Formal Clinical PDF progress report generator.
+```bash
+# Run backend end-to-end integration tests
+python backend/test_e2e_full.py
+
+# Verify frontend production build
+cd frontend && npm run build
+```
+
+---
+
+## 💻 Tech Stack
+
+| Component | Technology | Role |
+| :--- | :--- | :--- |
+| **Frontend Framework** | Next.js 16 (App Router) + Webpack | Responsive child and clinician dashboards, dynamic routing |
+| **UI & Styling** | React 19 + TypeScript + Tailwind CSS | Type-safe components, accessibility tokens, tactile controls |
+| **Audio & Speech** | Web Speech API + HTML5 Audio | Speech articulation models, text-to-speech cues |
+| **Backend API** | FastAPI + Python 3.9+ | High-throughput asynchronous REST API, JWT auth, RBAC |
+| **Database** | SQLite (Local fallback) / PostgreSQL | Resilient multi-environment persistence for patients & sessions |
+| **Clinical Reporting** | ReportLab (Python) | PDF export with telemetry charts, benchmarks, and notes |
+| **AI Decision Support** | Mistral Large API (Optional) | Clinical observation synthesis and parent summary drafting |
 
 ---
 
